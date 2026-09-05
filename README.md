@@ -1,2 +1,2 @@
 # thousand-brains-app
-Andriod app for the Thousand Brains Project  
+Android app for the Thousand Brains Project  
