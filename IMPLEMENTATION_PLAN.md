@@ -869,6 +869,40 @@ deliberately small.
   numeric thresholds themselves (`LINE_ANGLE_TOLERANCE`,
   `CORNER_CURVATURE_THRESHOLD`, etc.) are untouched; further calibration
   against real handwriting is still this phase's job.
+
+  A follow-up real-usage pass, after tolerances were hand-tuned once,
+  turned up a second structural gap in the same area: `decide()`'s
+  line-consistency check averaged the tangent over the *whole* run, and
+  since tangent is curvature's running integral, that average's
+  sensitivity to a real, shallow, sustained curve keeps shrinking the
+  longer the run has already gone on — letting a curvature well below
+  `MIN_ARC_CURVATURE` eventually drift far enough to break the LINE
+  hypothesis with nothing to hand off to (ARC's own floor was never
+  reached), producing a spurious LINE/LINE split with no CORNER or ARC in
+  between. Fixed by averaging over a bounded recent window instead
+  (`LINE_TREND_WINDOW`), sized *from* `LINE_ANGLE_TOLERANCE`/
+  `MIN_ARC_CURVATURE` rather than hand-picked, so retuning either
+  threshold can't silently reopen the gap. Separately, hand-tuned
+  threshold values turned out to be calibrated against the shape's raw
+  geometric angle rather than measured post-resample/-smooth curvature,
+  which is a very different scale (a synthetic single-point 90° corner
+  measures only ~58° of curvature at `DEFAULT_RESAMPLE_COUNT`; a drawn
+  semicircle measures only ~7-8°) — corrected against the actually-measured
+  values (see `PrimitiveLM.kt`'s companion object comments).
+
+  A third pass found the same "measured, not geometric" lesson applies
+  within corner detection itself: `CORNER_CURVATURE_THRESHOLD` calibrated
+  against a 90° right-angle corner's ~58°-66° measured peak (comfortably
+  caught) turned out to miss any real corner shallower than roughly a
+  120° interior angle — very common in ordinary handwriting, not an edge
+  case — since measured peak curvature falls off fast as the bend gets
+  gentler (a 150° interior angle measures only ~20°). A too-high threshold
+  produced the same symptom as the dead-zone bug above: a real, discrete
+  bend absorbed into neither segment, surfacing as a spurious LINE/LINE
+  split. Lowered from ~40° to ~15°, based on a full sweep of measured
+  curvature across interior angles from 90° to 170° (see
+  `PrimitiveLMTest`'s corner-angle sweep) — comfortably above measured
+  arc-range curvature (~8°) while catching corners down to ~150° interior.
 - **Multi-stroke composition remains the least theoretically settled part**
   of TBP itself (flagged as immature even in Monty) — the variant-based
   fallback is a pragmatic substitute for genuine compositional

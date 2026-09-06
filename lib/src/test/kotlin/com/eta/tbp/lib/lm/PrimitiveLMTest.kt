@@ -16,6 +16,46 @@ import kotlin.math.sin
 class PrimitiveLMTest {
     private val sensor = TouchSensorModule(sensorId = "touch-0")
 
+    /** Two straight legs of [legLength] points meeting at [interiorAngleDegrees] (180 = perfectly straight, no bend). */
+    private fun cornerShape(
+        interiorAngleDegrees: Double,
+        legLength: Int = 20,
+    ): List<RawPoint> {
+        val turn = Math.toRadians(180.0 - interiorAngleDegrees)
+        val first = List(legLength) { i -> RawPoint(i.toFloat(), 0f) }
+        val direction = RawPoint(cos(turn).toFloat(), sin(turn).toFloat())
+        val second = List(legLength) { i -> RawPoint(legLength - 1f, 0f) + direction * (i + 1).toFloat() }
+        return first + second
+    }
+
+    @Test
+    fun `corners well short of a right angle still segment as line, corner, line`() {
+        // A real hand-drawn corner is rarely a clean right angle -- 90
+        // degrees was the only interior angle the original threshold caught
+        // reliably. This sweep is the regression test for that gap: each of
+        // these interior angles must still produce a discrete CORNER, not a
+        // spurious LINE/LINE (or LINE/LINE/LINE) split with the bend
+        // silently absorbed into neither segment.
+        for (interiorAngle in listOf(90.0, 110.0, 130.0, 150.0)) {
+            val shape = cornerShape(interiorAngle)
+            val primitives = primitiveTypesOf(drivePrimitives(shape))
+            assertEquals(
+                "interior angle $interiorAngle degrees",
+                listOf("line", "corner", "line"),
+                primitives,
+            )
+        }
+    }
+
+    @Test
+    fun `a near-straight bend with no real corner stays a single line`() {
+        // The flip side of the sweep above: a bend this shallow (170
+        // degrees interior, only ~10 degrees of turn) is negligible enough
+        // that it should NOT be flagged as a discrete corner.
+        val primitives = primitiveTypesOf(drivePrimitives(cornerShape(170.0)))
+        assertEquals(listOf("line"), primitives)
+    }
+
     /** Drives a whole synthetic stroke through Sensor -> PrimitiveLM, per the orchestrator's per-point loop. */
     private fun drivePrimitives(points: List<RawPoint>): List<CmpMessage> {
         val lm = PrimitiveLM(lmId = "primitive-0")
@@ -108,6 +148,31 @@ class PrimitiveLMTest {
             }
         val primitives = drivePrimitives(semicircle)
         assertEquals(listOf("arc"), primitiveTypesOf(primitives))
+    }
+
+    @Test
+    fun `a shallow, gently-curved stroke segments as one cohesive primitive, not a string of spurious lines`() {
+        // A much gentler curve than the semicircle test above -- close to
+        // the boundary between "line" and "arc" -- specifically targeting
+        // the dead zone a whole-run tangent average used to open: a real,
+        // sustained-but-shallow curve could drift far enough to break LINE
+        // without its curvature ever reaching MIN_ARC_CURVATURE, producing
+        // a spurious run of several "line" primitives with nothing (no
+        // CORNER, no ARC) between them. Whether this particular shallowness
+        // lands on the "line" or "arc" side of the threshold is a boundary
+        // call this test doesn't care about -- what matters is that it's
+        // ONE primitive, not several.
+        val shallowArc =
+            List(40) { i ->
+                val angle = Math.toRadians(30.0) * i / 39
+                RawPoint(cos(angle).toFloat(), sin(angle).toFloat())
+            }
+        val primitives = drivePrimitives(shallowArc)
+        assertEquals(
+            "expected one cohesive primitive but got ${primitiveTypesOf(primitives)}",
+            1,
+            primitives.size,
+        )
     }
 
     @Test

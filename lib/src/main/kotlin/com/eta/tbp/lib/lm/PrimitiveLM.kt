@@ -5,8 +5,10 @@ import com.eta.tbp.lib.cmp.MorphologicalFeatures
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.sensor.StrokeFeatures
 import com.eta.tbp.lib.util.angleDifference
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -144,15 +146,24 @@ class PrimitiveLM(
      * that's [RunDecision.Continue] with a `null` locked type, not a break.
      */
     private fun decide(point: DecodedPoint): RunDecision {
-        // Compared against the run's circular-mean tangent, not a single
-        // reference point (e.g. runBuffer.first()): real touch input has
-        // per-point jitter that mostly cancels out in an average but would
-        // otherwise poison every subsequent comparison if the ONE reference
-        // sample happened to be noisy, spuriously breaking a genuinely
-        // straight stroke into several short "line" runs. A sustained real
-        // turn still trips this, just like ARC's own averageCurvature check
-        // below already relies on the same reasoning.
-        val averageTangent = circularMean(runBuffer.map { it.tangentAngle })
+        // Compared against a recent window's circular-mean tangent, not a
+        // single reference point (e.g. runBuffer.first()) and not the
+        // WHOLE run either: real touch input has per-point jitter that
+        // mostly cancels out in an average but would otherwise poison every
+        // subsequent comparison if the ONE reference sample happened to be
+        // noisy, spuriously breaking a genuinely straight stroke into
+        // several short "line" runs. But averaging the whole run creates
+        // its own bug: tangent is curvature's running integral, so a
+        // whole-run average's sensitivity to a real, sustained-but-shallow
+        // curve keeps shrinking the longer the run has already gone on --
+        // eventually letting even a curvature well below MIN_ARC_CURVATURE
+        // accumulate enough drift to break LINE, with nothing to hand off
+        // to (ARC's own threshold was never reached), producing a spurious
+        // LINE/LINE split with no CORNER or ARC between them. A bounded
+        // recent window (LINE_TREND_WINDOW, derived from this tolerance and
+        // MIN_ARC_CURVATURE) keeps that sensitivity constant regardless of
+        // run length instead.
+        val averageTangent = circularMean(runBuffer.takeLast(LINE_TREND_WINDOW).map { it.tangentAngle })
         val isLineConsistent = abs(angleDifference(point.tangentAngle, averageTangent)) <= LINE_ANGLE_TOLERANCE
         val averageCurvature = runBuffer.map { it.curvature }.average().toFloat()
         val isArcConsistent =
@@ -314,9 +325,50 @@ class PrimitiveLM(
     }
 
     private companion object {
-        const val CORNER_CURVATURE_THRESHOLD = 0.6f
-        const val MIN_ARC_CURVATURE = 0.05f
-        const val ARC_CURVATURE_TOLERANCE = 0.08f
-        const val LINE_ANGLE_TOLERANCE = 0.2f
+        // Calibrated against MEASURED curvature after resample+smooth, not
+        // the shape's raw geometric angle -- the two are very different
+        // scales, and the relationship isn't even linear-friendly to eyeball:
+        // sweeping a two-straight-legs corner's interior angle (see
+        // PrimitiveLMTest's corner-angle sweep) measures ~66 degrees of
+        // curvature for a 90-degree (right-angle) corner, ~41 degrees for a
+        // 120-degree corner, but only ~20 degrees for a 150-degree corner --
+        // a "gentle" corner (any real handwriting has plenty of these, not
+        // just right angles) attenuates fast. A deliberately-drawn
+        // semicircle measures only ~7-8 degrees of curvature per point at
+        // the same density (see StrokePreprocessorTest's curvature tests).
+        // Threshold values tuned to real geometric angles directly (e.g.
+        // ~90 degrees for a right angle) miss real corners/arcs entirely.
+        // ~15 degrees: comfortably above arc-range curvature (~8 degrees
+        // measured), while still catching corners down to ~150 degrees
+        // interior (~20 degrees measured) -- much shallower than 40 degrees
+        // (~120 degrees interior) caught before, which missed the very
+        // common case of a corner that isn't close to a right angle.
+        const val CORNER_CURVATURE_THRESHOLD = PI / 12f
+
+        // ~2.5 degrees: below the ~7-8-degree measured semicircle curvature, above smoothed noise.
+        const val MIN_ARC_CURVATURE = PI / 72f
+
+        // ~10 degrees: covers the measured semicircle's curvature spread (~3-8 degrees).
+        const val ARC_CURVATURE_TOLERANCE = PI / 18f
+
+        const val LINE_ANGLE_TOLERANCE = PI / 12f // 15 degrees
+
+        /**
+         * How many of the run's most recent points [decide]'s line-
+         * consistency check averages against, instead of the whole run —
+         * see [decide]'s doc for why a whole-run average opens a "dead
+         * zone" where a real, shallow, sustained curve can drift far enough
+         * to break LINE without its curvature ever reaching
+         * [MIN_ARC_CURVATURE], producing a spurious LINE/LINE split with
+         * nothing in between (no CORNER, no ARC). Derived from the two
+         * thresholds rather than hand-picked, so retuning either one can't
+         * silently reopen that gap: a curvature of [MIN_ARC_CURVATURE]
+         * deviates roughly `curvature * (window + 1) / 2` from a window-of-
+         * `window` circular mean, so this solves for the window where that
+         * deviation just reaches [LINE_ANGLE_TOLERANCE] — the point where a
+         * curvature right at the ARC floor reliably breaks LINE in time to
+         * hand off to ARC, regardless of how long the run has already gone on.
+         */
+        val LINE_TREND_WINDOW = ceil(2 * LINE_ANGLE_TOLERANCE / MIN_ARC_CURVATURE).toInt().coerceAtLeast(2)
     }
 }
