@@ -855,6 +855,20 @@ deliberately small.
 
 - **Threshold tuning (`MERGE_THRESHOLD`, tolerance bands, tie-margin) is the
   main day-to-day effort** — budget real time against your own handwriting.
+  A first real-usage pass already surfaced one structural gap ahead of
+  Phase 5: `PrimitiveLM`'s corner/arc/line thresholds were tuned against
+  clean synthetic test geometry, and real finger jitter reads as large
+  angular noise (a small lateral wobble over a short resampled step swings
+  `atan2` wildly), spuriously segmenting a single straight stroke into
+  several lines/arcs. Fixed via `StrokePreprocessor.smooth()` (a
+  boundary-aware moving average damping jitter before tangent/curvature
+  estimation amplifies it) and by comparing `decide()`'s line-consistency
+  check against the run's circular-mean tangent rather than a single
+  reference point (so per-point noise cancels instead of poisoning every
+  later comparison) — see `PrimitiveLM.kt`/`StrokePreprocessor.kt`. The
+  numeric thresholds themselves (`LINE_ANGLE_TOLERANCE`,
+  `CORNER_CURVATURE_THRESHOLD`, etc.) are untouched; further calibration
+  against real handwriting is still this phase's job.
 - **Multi-stroke composition remains the least theoretically settled part**
   of TBP itself (flagged as immature even in Monty) — the variant-based
   fallback is a pragmatic substitute for genuine compositional

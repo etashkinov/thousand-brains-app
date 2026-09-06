@@ -7,12 +7,13 @@ import kotlin.math.atan2
  * Turns a raw, variable-length, variable-speed stroke into a fixed-length,
  * speed- and scale-invariant sequence of [RawTouchObservation]s.
  *
- * The three stages (resample, normalize, tangent/curvature) are exposed
- * separately so each is independently unit-testable; [preprocess] is the
- * single entry point that chains them for real use.
+ * The four stages (resample, smooth, normalize, tangent/curvature) are
+ * exposed separately so each is independently unit-testable; [preprocess]
+ * is the single entry point that chains them for real use.
  */
 object StrokePreprocessor {
     const val DEFAULT_RESAMPLE_COUNT = 48
+    const val DEFAULT_SMOOTHING_WINDOW_RADIUS = 1
 
     private const val LENGTH_EPSILON = 1e-4f
 
@@ -76,6 +77,67 @@ object StrokePreprocessor {
     }
 
     /**
+     * Centered moving-average over [windowRadius] neighbors on each side,
+     * shrinking symmetrically near the ends — `min(windowRadius, i,
+     * size-1-i)` — rather than clamping to a lopsided window there, which
+     * would pull the first/last few points substantially toward the
+     * interior of the stroke (the average of `points[0..2*radius]` is not
+     * `points[0]`), inventing a spurious kink right where a stroke actually
+     * starts/ends.
+     *
+     * The two true endpoints still get a (necessarily one-sided) average
+     * with their single immediate neighbor rather than being left
+     * completely unsmoothed: [com.eta.tbp.lib.sensor.StrokePreprocessor.tangentsAndCurvatures]
+     * estimates the tangent at the very last point from only that point and
+     * its immediate neighbor (a shorter, noisier baseline than the central
+     * difference interior points get), so leaving it fully raw would let
+     * jitter concentrated at the endpoints — exactly where a real finger
+     * touch-down/lift-off tends to be noisiest — flow straight through
+     * unfiltered and spuriously break the run right at the tail.
+     *
+     * Damps the position jitter inherent to real touch input *before*
+     * tangent/curvature estimation amplifies it: a lateral wobble of only a
+     * couple pixels between closely-spaced resampled points can otherwise
+     * read as a large angular deviation (`atan2` of a small perpendicular
+     * offset over a short forward step swings wildly), spuriously tripping
+     * thresholds tuned for genuinely sharp turns. Smoothing mostly cancels
+     * random per-point jitter while barely touching a real, sustained curve
+     * or corner, since those shift a whole neighborhood in the same
+     * direction rather than randomly.
+     */
+    fun smooth(
+        points: List<RawPoint>,
+        windowRadius: Int = DEFAULT_SMOOTHING_WINDOW_RADIUS,
+    ): List<RawPoint> {
+        if (points.size <= 2 || windowRadius <= 0) return points
+        val lastIndex = points.size - 1
+        return List(points.size) { i ->
+            val start: Int
+            val end: Int
+            when (i) {
+                0 -> {
+                    start = 0
+                    end = minOf(windowRadius, lastIndex)
+                }
+
+                lastIndex -> {
+                    start = maxOf(0, lastIndex - windowRadius)
+                    end = lastIndex
+                }
+
+                else -> {
+                    val radius = minOf(windowRadius, i, lastIndex - i)
+                    start = i - radius
+                    end = i + radius
+                }
+            }
+            var sum = RawPoint(0f, 0f)
+            for (j in start..end) sum += points[j]
+            sum * (1f / (end - start + 1))
+        }
+    }
+
+    /**
      * Tangent angle per point via central difference (direction to the next
      * point, or from the previous point at the ends). Curvature is the
      * wrapped turning-angle delta between consecutive segments — a turning
@@ -114,13 +176,13 @@ object StrokePreprocessor {
         return tangents.zip(curvatures)
     }
 
-    /** Chains resample -> normalize -> tangent/curvature into observations. */
+    /** Chains resample -> smooth -> normalize -> tangent/curvature into observations. */
     fun preprocess(
         points: List<RawPoint>,
         strokeIndex: Int,
         targetCount: Int = DEFAULT_RESAMPLE_COUNT,
     ): List<RawTouchObservation> {
-        val resampled = normalize(resampleByArcLength(points, targetCount))
+        val resampled = normalize(smooth(resampleByArcLength(points, targetCount)))
         val tangentsAndCurvatures = tangentsAndCurvatures(resampled)
         return resampled.mapIndexed { index, point ->
             val (tangentAngle, curvature) = tangentsAndCurvatures[index]

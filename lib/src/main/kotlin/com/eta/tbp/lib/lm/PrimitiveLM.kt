@@ -144,8 +144,16 @@ class PrimitiveLM(
      * that's [RunDecision.Continue] with a `null` locked type, not a break.
      */
     private fun decide(point: DecodedPoint): RunDecision {
-        val isLineConsistent =
-            abs(angleDifference(point.tangentAngle, runBuffer.first().tangentAngle)) <= LINE_ANGLE_TOLERANCE
+        // Compared against the run's circular-mean tangent, not a single
+        // reference point (e.g. runBuffer.first()): real touch input has
+        // per-point jitter that mostly cancels out in an average but would
+        // otherwise poison every subsequent comparison if the ONE reference
+        // sample happened to be noisy, spuriously breaking a genuinely
+        // straight stroke into several short "line" runs. A sustained real
+        // turn still trips this, just like ARC's own averageCurvature check
+        // below already relies on the same reasoning.
+        val averageTangent = circularMean(runBuffer.map { it.tangentAngle })
+        val isLineConsistent = abs(angleDifference(point.tangentAngle, averageTangent)) <= LINE_ANGLE_TOLERANCE
         val averageCurvature = runBuffer.map { it.curvature }.average().toFloat()
         val isArcConsistent =
             abs(averageCurvature) >= MIN_ARC_CURVATURE &&

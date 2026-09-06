@@ -59,6 +59,53 @@ class StrokePreprocessorTest {
         resampledDense.zip(resampledSparse).forEach { (a, b) -> assertPointsClose(a, b) }
     }
 
+    // --- smooth ---
+
+    @Test
+    fun `smoothing leaves short inputs unchanged`() {
+        val points = listOf(RawPoint(0f, 0f), RawPoint(1f, 1f))
+        assertEquals(points, StrokePreprocessor.smooth(points))
+    }
+
+    @Test
+    fun `smoothing a perfectly straight line leaves interior points exact and barely shifts the endpoints`() {
+        val line = List(20) { i -> RawPoint(i.toFloat(), i.toFloat()) }
+        val smoothed = StrokePreprocessor.smooth(line)
+
+        // An average of collinear, evenly-spaced points is the same point,
+        // so every interior point is exact.
+        for (i in 1 until line.size - 1) {
+            assertPointsClose(line[i], smoothed[i])
+        }
+        // The two endpoints get a real (necessarily one-sided) average with
+        // their single neighbor too -- see smooth()'s doc on why -- so they
+        // shift slightly along the line, but never by more than one point's
+        // worth of spacing.
+        assertTrue((smoothed.first() - line.first()).length() <= 1.01f)
+        assertTrue((smoothed.last() - line.last()).length() <= 1.01f)
+    }
+
+    @Test
+    fun `smoothing damps perpendicular jitter on an otherwise straight line`() {
+        // A wobble large relative to the point spacing -- exactly the kind
+        // of noise real touch input has that used to fool PrimitiveLM's
+        // line-consistency check (see PrimitiveLMTest's jitter case).
+        val jittered =
+            List(30) { i ->
+                val t = i.toFloat()
+                val wobble = 0.6f * sin(t * 1.3f)
+                RawPoint(t + wobble, t - wobble)
+            }
+        val ideal = List(30) { i -> RawPoint(i.toFloat(), i.toFloat()) }
+        val smoothed = StrokePreprocessor.smooth(jittered)
+
+        fun totalDeviation(points: List<RawPoint>) = points.zip(ideal).sumOf { (p, i) -> (p - i).length().toDouble() }
+        assertTrue(
+            "expected smoothing to reduce deviation from the ideal line",
+            totalDeviation(smoothed) < totalDeviation(jittered),
+        )
+    }
+
     // --- normalize ---
 
     @Test

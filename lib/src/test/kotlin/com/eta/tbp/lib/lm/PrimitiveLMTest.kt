@@ -81,6 +81,25 @@ class PrimitiveLMTest {
     }
 
     @Test
+    fun `a straight line with realistic touch jitter still segments as a single line`() {
+        // Simulates finger tremor: a perpendicular wobble superimposed on an
+        // otherwise straight diagonal, large relative to the spacing between
+        // points and oscillating often (unlike a real sustained curve). This
+        // used to fool decide()'s line-consistency check -- comparing every
+        // point against a single first-point reference, with no noise
+        // cancellation -- into spuriously breaking one stroke into several
+        // "line"/"arc" primitives.
+        val jitteredLine =
+            List(60) { i ->
+                val t = i.toFloat()
+                val wobble = 0.4f * sin(t * 0.4f)
+                RawPoint(t + wobble, t - wobble)
+            }
+        val primitives = drivePrimitives(jitteredLine)
+        assertEquals(listOf("line"), primitiveTypesOf(primitives))
+    }
+
+    @Test
     fun `a semicircle segments into a single arc primitive`() {
         val semicircle =
             List(40) { i ->

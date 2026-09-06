@@ -93,6 +93,24 @@ class CharacterGraphLMTest {
     }
 
     @Test
+    fun `currentNodes reflects the buffered episode and clears on preEpisode`() {
+        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
+        assertTrue(characterGraphLM.currentNodes().isEmpty())
+
+        val primitiveLM = PrimitiveLM(lmId = "primitive-0")
+        drive(lShape(), primitiveLM, characterGraphLM)
+
+        val nodes = characterGraphLM.currentNodes()
+        assertEquals(
+            listOf(PrimitiveType.LINE, PrimitiveType.CORNER, PrimitiveType.LINE),
+            nodes.map { it.primitiveType },
+        )
+
+        characterGraphLM.preEpisode()
+        assertTrue(characterGraphLM.currentNodes().isEmpty())
+    }
+
+    @Test
     fun `possibleMatches and recognitionResult are Unknown before anything is taught or drawn`() {
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
 

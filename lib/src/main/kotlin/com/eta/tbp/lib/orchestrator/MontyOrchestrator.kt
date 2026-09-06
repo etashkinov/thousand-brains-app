@@ -106,10 +106,13 @@ class MontyOrchestrator(
     /**
      * Resamples every stroke independently (consistent point density per
      * stroke) but normalizes them together, sharing one centroid/scale
-     * across the whole character — see class doc. Tangent/curvature are
-     * invariant to uniform translate+scale, so computing them per-stroke on
-     * the unnormalized resampled points is equivalent to computing them on
-     * the normalized ones; only `position` needs the shared normalization.
+     * across the whole character — see class doc. Each stroke is smoothed
+     * ([StrokePreprocessor.smooth]) right after resampling, damping real
+     * touch jitter before tangent/curvature estimation would otherwise
+     * amplify it. Tangent/curvature are invariant to uniform translate+
+     * scale, so computing them per-stroke on the smoothed-but-unnormalized
+     * points is equivalent to computing them on the normalized ones; only
+     * `position` needs the shared normalization.
      *
      * Every stroke contributes the same fixed point count to that shared
      * estimate regardless of its actual arc length, so a short stroke and a
@@ -122,7 +125,9 @@ class MontyOrchestrator(
 
         val resampledPerStroke =
             strokePoints.map { points ->
-                StrokePreprocessor.resampleByArcLength(points, StrokePreprocessor.DEFAULT_RESAMPLE_COUNT)
+                StrokePreprocessor.smooth(
+                    StrokePreprocessor.resampleByArcLength(points, StrokePreprocessor.DEFAULT_RESAMPLE_COUNT),
+                )
             }
         val flatNormalized = StrokePreprocessor.normalize(resampledPerStroke.flatten())
 

@@ -94,6 +94,15 @@ class CharacterGraphLM(
         }
     }
 
+    /**
+     * The primitives buffered so far this episode — direct introspection
+     * for debugging/inspection (e.g. an LM-state overlay), same spirit as
+     * [evidenceSnapshot]: a plain query a caller makes, not something a CMP
+     * message carries. Empty before any stroke completes or right after
+     * [preEpisode].
+     */
+    fun currentNodes(): List<GraphNode> = nodeBuffer.toList()
+
     override fun preEpisode() {
         nodeBuffer.clear()
         runningAbsoluteAngle = 0f

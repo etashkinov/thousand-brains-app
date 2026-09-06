@@ -8,8 +8,10 @@ import androidx.lifecycle.ViewModel
 import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
 import com.eta.tbp.lib.lm.PrimitiveLM
+import com.eta.tbp.lib.lm.PrimitiveType
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
 import com.eta.tbp.lib.sensor.TouchSensorModule
 
@@ -49,25 +51,37 @@ class RecognizerViewModel : ViewModel() {
     var taughtLabel by mutableStateOf<String?>(null)
         private set
 
+    /** Primitives Tier 1 has segmented so far this episode — [CharacterGraphLM.currentNodes], for the LM-state overlay. */
+    var currentPrimitives by mutableStateOf<List<PrimitiveType>>(emptyList())
+        private set
+
+    /** Every learned graph, by label — [GraphMemory.snapshot], for the LM-state overlay. */
+    var learnedGraphs by mutableStateOf<Map<String, List<GraphObjectModel>>>(emptyMap())
+        private set
+
+    /** Whether the LM-state overlay is showing. Persists across characters once opened. */
+    var showLmState by mutableStateOf(false)
+        private set
+
     fun onStrokeCompleted(points: List<Offset>) {
         if (result != null) return
         orchestrator.stepStroke(points.toRawPoints())
         strokes = strokes + listOf(points)
-        evidence = tier2.evidenceSnapshot()
+        refreshLmState()
     }
 
     fun onUndo() {
         if (strokes.isEmpty() || result != null) return
         orchestrator.undoLastStroke()
         strokes = strokes.dropLast(1)
-        evidence = tier2.evidenceSnapshot()
+        refreshLmState()
     }
 
     fun onClear() {
         if (strokes.isEmpty() || result != null) return
         orchestrator.clearCharacter()
         strokes = emptyList()
-        evidence = tier2.evidenceSnapshot()
+        refreshLmState()
     }
 
     fun onDone() {
@@ -79,12 +93,14 @@ class RecognizerViewModel : ViewModel() {
         if (label.isBlank()) return
         orchestrator.teach(label)
         taughtLabel = label
+        refreshLmState()
     }
 
     fun onConfirm() {
         val recognized = result as? RecognitionResult.Recognized ?: return
         orchestrator.teach(recognized.label)
         taughtLabel = recognized.label
+        refreshLmState()
     }
 
     fun onCorrect(label: String) = onTeach(label)
@@ -95,5 +111,16 @@ class RecognizerViewModel : ViewModel() {
         evidence = emptyMap()
         result = null
         taughtLabel = null
+        refreshLmState()
+    }
+
+    fun onToggleLmState() {
+        showLmState = !showLmState
+    }
+
+    private fun refreshLmState() {
+        evidence = tier2.evidenceSnapshot()
+        currentPrimitives = tier2.currentNodes().map { it.primitiveType }
+        learnedGraphs = memory.snapshot()
     }
 }
