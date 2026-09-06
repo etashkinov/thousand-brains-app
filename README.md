@@ -88,7 +88,11 @@ design — it ports Monty's actual published interfaces:
   (`getOutput`, ~ Monty's `get_output` — always a single-hypothesis point
   estimate, never a distribution, matching what Monty itself does), plus
   `preEpisode`/`postEpisode` lifecycle hooks and a `state`/`loadState`
-  save-load contract.
+  save-load contract. The lifecycle hooks bound the **same episode for
+  every tier at once** — one full character, however many strokes it takes
+  — mirroring Monty's `MontyBase.reset()`, which resets every sensor and
+  learning module identically regardless of hierarchy position; there's no
+  per-tier episode scoping in Monty, so there isn't one here either.
 - **`GraphObjectModel`** / **`GraphMemory`** mirror Monty's own object-model
   storage, down to reusing the concept (and naming intent) of Monty's
   `detect_new_object_k_steps` — the actual mechanism Monty uses to decide
@@ -147,6 +151,7 @@ for the full boundary rules.
 | Small rotation tolerance, not full rotation search | Unlike 3D objects, a character's orientation is part of its identity (b/d/p/q, 6/9) — searching full rotation would actively cause misrecognition |
 | Multiple graph variants per label, not one generalized template | Real handwriting varies in stroke count/order, not just size/slant; forcing one graph to cover all of it either overfits or corrupts the model |
 | Ties are reported, not resolved by a forced guess | A tie is a correct output of evidence accumulation — some character pairs (6/9, O/0) are genuinely, structurally ambiguous from shape alone, and the app should say so |
+| Episode boundary is per-character, uniform across every tier | Mirrors Monty's `MontyBase.reset()` applying identically to every SM/LM; a pen lift between strokes is a `strokeIndex` discontinuity handled as message data (mirroring Monty's own on/off-object `use_state` flag), not a separate per-tier lifecycle scope |
 | Static image input is a separate, later milestone | Requires trajectory reconstruction (skeleton-glide + multi-LM voting to resolve stroke-order/crossing ambiguity) — a materially harder, well-studied problem in its own right ("handwriting trajectory recovery" in the literature), not a minor variant of the core app |
 | `lib`/`app` split, `lib` has zero Android SDK dependencies | Keeps the brain logic unit-testable on the JVM in milliseconds (no emulator, no Robolectric), and makes it obvious at build time — not just by convention — when device-specific code has crept into the wrong place |
 

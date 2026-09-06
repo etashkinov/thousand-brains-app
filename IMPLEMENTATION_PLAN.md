@@ -275,13 +275,19 @@ class PrimitiveLM(override val lmId: String) : LearningModule<Unit> {
     // run of points buffers until one breaks its line/arc/corner hypothesis,
     // at which point it's queued and drained by the next getOutput() call(s).
     // A run ending and a corner starting can both complete on the same point,
-    // so finished runs are queued rather than held in one slot.
-    override fun matchingStep(messages: List<CmpMessage>) { /* decode + segment, see PrimitiveLM.kt */ }
+    // so finished runs are queued rather than held in one slot. A pen lift
+    // between strokes of the same character is *not* a separate episode
+    // (see §3.6) — it's a strokeIndex discontinuity inside this same
+    // message stream, and matchingStep force-breaks the open run when it
+    // sees one, the same way Monty signals sensor discontinuities
+    // (on/off-object) as a per-message flag (`use_state`) rather than a
+    // distinct lifecycle scope per tier.
+    override fun matchingStep(messages: List<CmpMessage>) { /* decode + segment; a strokeIndex change force-breaks the open run, see PrimitiveLM.kt */ }
     override fun receiveVotes(votes: List<Any>) { /* no-op in v1 */ }
     override fun sendOutVote(): Any? = null // no siblings to vote with in v1
     override fun getOutput(): CmpMessage? = TODO("drain the queued finished-run messages")
-    override fun preEpisode() { /* reset run-tracking state for the new stroke */ }
-    override fun postEpisode() { /* flush whatever run is still open */ }
+    override fun preEpisode() { /* reset run-tracking state for the new character */ }
+    override fun postEpisode() { /* flush whatever run is still open at the end of the character */ }
     override fun setExperimentMode(mode: ExperimentMode) {}
     override fun state() = Unit // stateless across episodes
     override fun loadState(state: Unit) {}
@@ -308,8 +314,38 @@ class CharacterGraphLM(
     /** Direct introspection for the UI (live evidence bars, tie detection) — see note below. */
     fun evidenceSnapshot(): Map<String, Float> = TODO()
 
+    /**
+     * Recognition decision, mirroring Monty's `get_possible_matches()` /
+     * `_threshold_possible_matches()` (`evidence_matching/learning_module.py`):
+     * labels within [xPercentThreshold]% of the max evidence are "possible
+     * matches" — 0 means no match, 1 means a confident recognition, 2+ means
+     * a genuine tie. Simplified from Monty's own mean/std branching (not
+     * needed at this evidence scale), same spirit as detectNewObject's
+     * already-simplified scoring (§3.5).
+     */
+    fun possibleMatches(xPercentThreshold: Float = 10f): List<String> = TODO()
+
+    /** Combines [possibleMatches] + [evidenceSnapshot] into the three-way UI decision, see RecognitionResult below. */
+    fun recognitionResult(): RecognitionResult = TODO()
+
     /** This app's ground-truth substitute: a human teaches by drawing + labeling (§1). */
     fun teach(label: String) { TODO() }
+}
+
+/**
+ * The three-way outcome the teach/recognize UI branches on (Phase 4).
+ * Mirrors Monty's own `possible_matches`-driven terminal states
+ * (`evidence_matching/learning_module.py`), not an app-invented concept:
+ * zero possible matches is Monty's own "no_match" terminal state, one is a
+ * normal convergence, and 2+ is Monty's own multi-hypothesis case — this app
+ * just surfaces that last case as a question instead of forcing a guess.
+ */
+sealed class RecognitionResult {
+    object Unknown : RecognitionResult()
+
+    data class Recognized(val label: String, val confidence: Float) : RecognitionResult()
+
+    data class Ambiguous(val labels: List<String>, val evidence: Map<String, Float>) : RecognitionResult()
 }
 ```
 
@@ -434,37 +470,156 @@ for the turn direction.
 **Not built yet** — Phases 0–3 validated the pipeline by driving each tier
 directly from unit tests (see `CharacterGraphLMTest`'s `drive()` helper,
 which is essentially this loop already, minus a real class around it).
-Building `MontyOrchestrator` for real is part of Phase 4, wiring `app`'s
-touch input to it.
+Building `MontyOrchestrator` for real is Phase 4's job, wiring `app`'s touch
+input to it.
+
+**Episode boundary is uniform across every tier — not per-LM-type.** Real
+Monty's `MontyExperiment.run_episode()` calls `MontyBase.reset()` exactly
+once per episode, and `reset()` loops over *every* sensor module and
+learning module identically (`monty_base.py`'s `reset()`) — nothing in
+Monty lets one LM define a different episode scope than another; the
+experiment/environment owns that boundary, not the LM. Since one Monty
+episode is one full object presentation (potentially many sensor movement
+steps before `is_done`), this app's matching unit is one full
+**character** — potentially several strokes — not one stroke. So
+`preEpisode()`/`postEpisode()` on both `PrimitiveLM` and `CharacterGraphLM`
+bound one character, together, always. (An earlier draft of this section
+briefly proposed a stroke-scoped episode for `PrimitiveLM` and a
+character-scoped one for `CharacterGraphLM` — worth recording as a mistake
+caught by checking Monty's actual source rather than reasoning about it
+from the class names alone, same category of correction as §3.3's
+`getOutput`/`sendOutVote` split.)
+
+The pen lift between strokes of the same character is therefore *not* a
+second, smaller episode — it's an ordinary discontinuity riding in the
+message stream, the same way Monty itself signals a sensor discontinuity
+(leaving an object, `on_object` going false) via a per-observation flag
+(`use_state`, `sensor_modules.py`) rather than a separate lifecycle scope.
+Here, `StrokeFeatures.strokeIndex` already carries exactly this:
+`PrimitiveLM.step()` force-breaks its open run whenever `strokeIndex`
+changes — the same code path as hitting a corner — with no new message
+field needed.
+
+**A second, independent issue surfaced while implementing this: per-stroke
+normalization silently destroys cross-stroke position information.**
+`StrokePreprocessor.normalize()` centers+scales whatever point list it's
+given to *its own* centroid/bounding-radius. If each stroke of a
+multi-stroke character were normalized independently, every stroke's
+primitives would land near its own local origin regardless of where the
+strokes actually sit relative to each other — `GraphMatcher`'s
+position-distance term would then carry no real cross-stroke
+discriminative signal (e.g. it couldn't distinguish a "+" from two
+unrelated strokes drawn far apart). The fix: normalize once across every
+stroke drawn so far in the character, using `StrokePreprocessor`'s
+already-separated `resampleByArcLength`/`normalize`/`tangentsAndCurvatures`
+primitives rather than its all-in-one `preprocess()` (tangent/curvature are
+invariant to uniform translate+scale, so they're still computed per stroke
+on the unnormalized resampled points — only `position` needs the shared
+value). Since that shared normalization can shift whenever a stroke is
+added or removed, there's no way to incrementally patch already-computed
+primitives, so the orchestrator holds each character's raw stroke points
+and replays the whole pipeline from scratch on every change. This is cheap
+at this data scale (a handful of strokes, tens of points each) and, as a
+direct consequence, gives the orchestrator natural, correct ownership of
+undo/clear too — since it already holds the authoritative stroke list,
+"undo" is just "drop the last stroke and replay," with no separate replay
+logic needed on the `app` side.
 
 ```kotlin
 class MontyOrchestrator(
     private val sensorModule: SensorModule<RawTouchObservation>,
     private val tier1: PrimitiveLM,
-    private val tier2: CharacterGraphLM
+    private val tier2: CharacterGraphLM,
 ) {
-    fun stepEpisode(observations: List<RawTouchObservation>) {
-        tier1.preEpisode(); tier2.preEpisode()
+    private val strokePoints = mutableListOf<List<RawPoint>>()
 
-        for (obs in observations) {
-            val smMessage = sensorModule.step(obs)
-            tier1.matchingStep(listOf(smMessage))
-            // A run ending and a corner starting can both complete on the same
-            // point, so getOutput() must be drained in a loop, not called once.
-            val t1Outputs = generateSequence { tier1.getOutput() }.toList()
-            if (t1Outputs.isNotEmpty()) tier2.matchingStep(t1Outputs)
-            tier2.receiveVotes(emptyList())   // Phase 8: populated by sibling glide LMs
-        }
+    /** Starts a new character episode, discarding any strokes from a previous one that was never ended. */
+    fun beginCharacter() {
+        strokePoints.clear()
+        replay()
+    }
 
-        // Flush tier1's trailing run (postEpisode()) *before* tier2's own
-        // postEpisode(), so the last primitive still reaches tier2's buffer.
-        tier1.postEpisode()
-        val trailing = generateSequence { tier1.getOutput() }.toList()
-        if (trailing.isNotEmpty()) tier2.matchingStep(trailing)
+    /** Adds one completed stroke's raw points to the still-open character and recomputes evidence. */
+    fun stepStroke(points: List<RawPoint>) {
+        strokePoints.add(points)
+        replay()
+    }
+
+    /** Drops the most recently added stroke (if any) and recomputes evidence. */
+    fun undoLastStroke() {
+        if (strokePoints.isEmpty()) return
+        strokePoints.removeAt(strokePoints.lastIndex)
+        replay()
+    }
+
+    /** Discards every stroke drawn so far in the current character. */
+    fun clearCharacter() {
+        strokePoints.clear()
+        replay()
+    }
+
+    /** Ends the character episode — the one point where tier2's postEpisode() truly fires. */
+    fun endCharacter(): RecognitionResult {
         tier2.postEpisode()
+        return tier2.recognitionResult()
+    }
+
+    fun teach(label: String) = tier2.teach(label)
+
+    /**
+     * Recomputes the whole character from scratch. tier1.preEpisode()/
+     * postEpisode() fire on every replay — harmless, since PrimitiveLM is
+     * fully stateless across calls — so evidence stays live as strokes are
+     * added or removed. tier2.postEpisode() deliberately does NOT fire
+     * here: its only consequential effect (snapshotting for teach()) is
+     * reserved for the true end of the character, in endCharacter().
+     */
+    private fun replay() {
+        tier1.preEpisode()
+        tier2.preEpisode()
+        for (observations in buildNormalizedObservations()) {
+            for (observation in observations) {
+                tier1.matchingStep(listOf(sensorModule.step(observation)))
+                drainTier1IntoTier2()
+            }
+        }
+        tier1.postEpisode()
+        drainTier1IntoTier2()
+    }
+
+    private fun drainTier1IntoTier2() {
+        val outputs = generateSequence { tier1.getOutput() }.toList()
+        if (outputs.isNotEmpty()) tier2.matchingStep(outputs)
+        tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
+    }
+
+    /** Resamples each stroke independently, but normalizes them together — see the note above. */
+    private fun buildNormalizedObservations(): List<List<RawTouchObservation>> {
+        if (strokePoints.isEmpty()) return emptyList()
+        val resampledPerStroke = strokePoints.map {
+            StrokePreprocessor.resampleByArcLength(it, StrokePreprocessor.DEFAULT_RESAMPLE_COUNT)
+        }
+        val flatNormalized = StrokePreprocessor.normalize(resampledPerStroke.flatten())
+        var offset = 0
+        return resampledPerStroke.mapIndexed { strokeIndex, resampled ->
+            val normalizedChunk = flatNormalized.subList(offset, offset + resampled.size)
+            val tangentsAndCurvatures = StrokePreprocessor.tangentsAndCurvatures(resampled)
+            offset += resampled.size
+            normalizedChunk.mapIndexed { i, point ->
+                val (tangentAngle, curvature) = tangentsAndCurvatures[i]
+                RawTouchObservation(point.toFloatArray(), tangentAngle, curvature, strokeIndex, i)
+            }
+        }
     }
 }
 ```
+
+Known, accepted simplification: every stroke is resampled to the same
+fixed point count before being pooled for shared normalization, so a short
+stroke and a long stroke contribute equally many points to the
+centroid/scale estimate rather than being weighted by their actual arc
+length — worth revisiting in Phase 5 if very unevenly-sized strokes (e.g.
+a dot plus a long stroke) turn out to matter.
 
 ---
 
@@ -485,6 +640,8 @@ class MontyOrchestrator(
 | Motor system + simulator driving a sensor | None — touch input replaces the motor system | **Not ported** — the human *is* the motor system |
 | Multiple LMs voting via lateral CMP | Single LM per tier in v1; multiple `PrimitiveLM`s voting in Phase 8 | **Deferred**, same interface supports it |
 | Goal-State Generators / `CmpGoal` | Present as a class shape, unused until Phase 8 | **Stubbed** |
+| Episode = one object presentation, uniform across every SM/LM (`MontyBase.reset()`) | Episode = one character (possibly multi-stroke), uniform across both tiers; stroke boundaries are a `strokeIndex` discontinuity in the message stream, not a separate lifecycle scope (§3.6) | **Faithful** |
+| `get_possible_matches()` / `_threshold_possible_matches()` deciding no-match/converged/multi-hypothesis | `CharacterGraphLM.possibleMatches()` / `recognitionResult()` | **Faithful concept**, simplified scoring (straight percent-of-max, no mean/std branching) |
 
 Be honest with yourself about the last two rows while building v1: most of
 the voting/goal machinery is architecturally present but does nothing yet,
@@ -542,13 +699,76 @@ implementations now, not the original sketch's `TODO()`s — see §3.5.
 
 ### Phase 4 — Teach & Recognize UI Loop (2–3 days)
 Build `MontyOrchestrator` for real (§3.6) and wire `app`'s touch input to
-it. Teach flow (no match → prompt for label → `CharacterGraphLM.teach()`,
-already built in Phase 3), recognize flow (live evidence bars driven by
-`evidenceSnapshot()` → top result + confirm/correct), correction flow
-(wrong guess → becomes a teaching example), tie/ambiguity flow (close
-scores → disambiguation question, not a forced guess).
-**Exit:** full loop works for a handful of self-taught labels, including a
-deliberately ambiguous pair.
+it. The core design point (§3.6): one episode is one full **character**,
+uniform across both tiers — matching Monty's own `MontyBase.reset()`, which
+applies identically to every SM/LM regardless of hierarchy position.
+Strokes are steps *within* that episode, not episodes of their own; a pen
+lift is a `strokeIndex` discontinuity `PrimitiveLM` reacts to directly,
+mirroring how Monty signals sensor discontinuities (`use_state`) as message
+data rather than a separate lifecycle call.
+
+**`lib` additions:**
+- `MontyOrchestrator` (§3.6): `beginCharacter()` / `stepStroke(points)` /
+  `undoLastStroke()` / `clearCharacter()` / `endCharacter(): RecognitionResult`
+  / `teach(label)`. Normalizes once across every stroke drawn so far in the
+  character (not per stroke — see §3.6's note on why), replaying the whole
+  pipeline from scratch on every change; this also means `undoLastStroke()`/
+  `clearCharacter()` live here, not as `app`-side replay logic.
+- `PrimitiveLM.step()`: detect a `strokeIndex` change against the buffered
+  run and force a break (same code path as a corner ending a line), so a
+  run never silently spans a pen lift. Update its `preEpisode`/
+  `postEpisode` doc comments — they now bound one character, not one stroke.
+- `CharacterGraphLM.possibleMatches(xPercentThreshold: Float = 10f): List<String>`
+  — port of Monty's `get_possible_matches()`/`_threshold_possible_matches()`
+  (`evidence_matching/learning_module.py`), simplified to straight
+  percent-of-max thresholding (no mean/std branching — same spirit as
+  `detectNewObject`'s already-simplified scoring, §3.5). 0 matches → no
+  match, 1 → confident recognition, 2+ → genuine tie.
+- `RecognitionResult` sealed class (`Unknown` / `Recognized(label, confidence)`
+  / `Ambiguous(labels, evidence)`), built from `possibleMatches()` +
+  `evidenceSnapshot()` via `CharacterGraphLM.recognitionResult()`, and
+  returned by `MontyOrchestrator.endCharacter()`.
+- Tests: a `PrimitiveLMTest` case for a stroke gap not bleeding into a run;
+  `possibleMatches`/`recognitionResult` unit cases (empty memory → Unknown,
+  one dominant label → Recognized, a deliberately close pair → Ambiguous);
+  a new `MontyOrchestratorTest` driving a multi-stroke synthetic shape
+  (e.g. a 2-stroke "+") end to end — teach it, then confirm a fresh,
+  differently-drawn instance still scores it highest — plus the existing
+  single-stroke cases as a regression check.
+
+**`app` wiring:**
+- `RecognizerViewModel` (`androidx.lifecycle.ViewModel` — already a
+  dependency, unused until now) owns one long-lived `MontyOrchestrator` /
+  `GraphMemory` for the process lifetime (Phase 7 adds real persistence
+  across process death). Exposes: the strokes drawn so far this character,
+  live `evidenceSnapshot()` for the bars, and the current
+  `RecognitionResult?` once "Done" is pressed.
+- `DrawingToolbar`: add a "Done" button (alongside Undo/Clear) that closes
+  the current character (`endCharacter()`) and triggers the result panel.
+  Undo/Clear delegate straight to `MontyOrchestrator.undoLastStroke()`/
+  `clearCharacter()` — no separate replay logic needed on the `app` side.
+- Live evidence bars: a small composable rendering `evidenceSnapshot()` as
+  per-label bars, refreshed at least once per completed stroke (finer,
+  per-point updates are a possible later refinement, not required for the
+  exit criterion).
+- Result panel, one of three variants driven by `RecognitionResult`:
+  - `Unknown` → a label text field + "Teach" button → `teach(label)`.
+  - `Recognized(label, confidence)` → "Is this '<label>'?" with **Confirm**
+    (calls `teach(label)` again, reinforcing the matched variant) and
+    **Correct** (reveals a text field for the right label, calls
+    `teach(correctLabel)`).
+  - `Ambiguous(labels)` → one button per candidate label plus a "something
+    else" text field, all calling `teach(chosenLabel)` — the
+    disambiguation question itself, not a forced top-1 guess.
+- Wire `DrawingScreen`/`DrawingCanvas` to `RecognizerViewModel` instead of
+  local `remember` state; drop the Phase-0 log-only `logPreprocessed` call
+  now that the real pipeline consumes completed strokes.
+
+**Exit:** on-device, teach a handful of labels including one genuinely
+multi-stroke letter (e.g. "t" or "+") and a deliberately ambiguous pair
+(e.g. "O"/"0"), and confirm: the multi-stroke label is recognized as one
+character from a fresh two-stroke instance, and the ambiguous pair
+surfaces a disambiguation prompt rather than a forced guess.
 
 ### Phase 5 — Merge/Spawn Tuning (2–3 days)
 Tune `GraphMemory.MERGE_THRESHOLD` and `matchScore` against real handwriting
@@ -610,9 +830,9 @@ deliberately small.
   - `CharacterGraphLMTest` — the actual Phase 3 exit criterion end to end
     through the full Phase 1→2→3 pipeline, plus a `getOutput()`/
     `evidenceSnapshot()` coherence check.
-  - `MontyOrchestrator` step-loop behavior driven entirely by synthetic
-    `RawTouchObservation` sequences, once it's built (Phase 4) — no real
-    touchscreen or device needed.
+  - `MontyOrchestrator` step-loop behavior driven by synthetic multi-stroke
+    `RawPoint` sequences, including a pen lift mid-character, once it's
+    built (Phase 4) — no real touchscreen or device needed.
   - `state()`/`loadState()` round-trips on plain Kotlin data.
   - Because none of this touches Android, these tests are fast enough to run
     on every save and in CI without a device/emulator.
@@ -655,6 +875,8 @@ deliberately small.
 - **When a design decision here is ambiguous, check real Monty's source
   before inventing something new** (see `CLAUDE.md` for the local reference
   checkout) — this app should stay legible to anyone who already knows
-  Monty. The `getOutput`/`sendOutVote` split and dropping
-  `getFeatureByName` for typed payloads both came from doing exactly this
-  after an earlier design had drifted from Monty's actual behavior.
+  Monty. The `getOutput`/`sendOutVote` split, dropping `getFeatureByName`
+  for typed payloads, and correcting the orchestrator's episode boundary to
+  be uniform across tiers instead of per-LM-type (§3.6) all came from doing
+  exactly this after an earlier design had drifted from Monty's actual
+  behavior.

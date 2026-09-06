@@ -12,13 +12,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** Bottom toolbar for the drawing screen: undo the last stroke, or clear all of them. */
+/** Bottom toolbar for the drawing screen: undo the last stroke, clear all of them, or finish the character. */
 @Composable
 fun DrawingToolbar(
     onUndo: () -> Unit,
     onClear: () -> Unit,
+    onDone: () -> Unit,
     canUndo: Boolean,
     canClear: Boolean,
+    canDone: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier.fillMaxWidth(), tonalElevation = 4.dp) {
@@ -32,8 +34,11 @@ fun DrawingToolbar(
             OutlinedButton(onClick = onUndo, enabled = canUndo) {
                 Text("Undo")
             }
-            Button(onClick = onClear, enabled = canClear) {
+            OutlinedButton(onClick = onClear, enabled = canClear) {
                 Text("Clear")
+            }
+            Button(onClick = onDone, enabled = canDone) {
+                Text("Done")
             }
         }
     }

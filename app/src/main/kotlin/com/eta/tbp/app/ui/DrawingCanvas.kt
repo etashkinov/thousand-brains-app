@@ -17,8 +17,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.unit.dp
-import com.eta.tbp.app.sensor.toRawPoints
-import com.eta.tbp.lib.sensor.StrokePreprocessor
 
 private const val TAG = "TouchCapture"
 private val STROKE_WIDTH = 20.dp
@@ -27,20 +25,23 @@ private val STROKE_COLOR = Color(0xFF4FC3F7) // light blue
 
 /**
  * Captures raw [MotionEvent]s and renders strokes live. Contains no
- * recognition logic itself — it's the `app`-side adapter that converts
- * completed strokes into `lib`'s `RawTouchObservation`s via
- * [StrokePreprocessor], kept separate from the brain per the lib/app split.
+ * recognition logic itself — it's the `app`-side adapter that hands off a
+ * completed stroke's raw points to the caller, kept separate from the
+ * brain per the lib/app split.
  *
  * @param strokes completed strokes, hoisted so a toolbar (undo/clear) can
- *   mutate the same list this canvas renders.
- * @param onStrokesChange invoked with the updated stroke list whenever a
- *   stroke completes.
+ *   act on the same list this canvas renders.
+ * @param onStrokeCompleted invoked with the newly-completed stroke's points
+ *   whenever one finishes.
+ * @param enabled when false, touches are ignored — used while a
+ *   recognition result is showing and no further strokes should be fed in.
  */
 @Composable
 fun DrawingCanvas(
     strokes: List<List<Offset>>,
-    onStrokesChange: (List<List<Offset>>) -> Unit,
+    onStrokeCompleted: (List<Offset>) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var activeStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
 
@@ -49,6 +50,7 @@ fun DrawingCanvas(
             modifier
                 .background(Color.White)
                 .pointerInteropFilter { event ->
+                    if (!enabled) return@pointerInteropFilter false
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             activeStroke = pointsFrom(event)
@@ -60,10 +62,7 @@ fun DrawingCanvas(
 
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             activeStroke = activeStroke + pointsFrom(event)
-                            val strokeIndex = strokes.size
-                            logStroke(strokeIndex, activeStroke)
-                            logPreprocessed(strokeIndex, activeStroke)
-                            onStrokesChange(strokes + listOf(activeStroke))
+                            onStrokeCompleted(activeStroke)
                             activeStroke = emptyList()
                         }
 
@@ -100,33 +99,6 @@ private fun DrawScope.drawStroke(points: List<Offset>) {
             end = points[i + 1],
             strokeWidth = strokeWidthPx,
             cap = StrokeCap.Round,
-        )
-    }
-}
-
-private fun logStroke(
-    strokeIndex: Int,
-    points: List<Offset>,
-) {
-    Log.d(TAG, "Stroke $strokeIndex complete: ${points.size} points")
-    points.forEachIndexed { index, point ->
-        Log.d(TAG, "  [$index] x=${point.x}, y=${point.y}")
-    }
-}
-
-/** Observational only: runs the Phase-1 resample/normalize pipeline and logs the result. */
-private fun logPreprocessed(
-    strokeIndex: Int,
-    points: List<Offset>,
-) {
-    val observations = StrokePreprocessor.preprocess(points.toRawPoints(), strokeIndex)
-    Log.d(TAG, "Stroke $strokeIndex preprocessed: ${observations.size} observations")
-    observations.forEach { observation ->
-        val (x, y) = observation.position
-        Log.d(
-            TAG,
-            "  [${observation.orderInStroke}] x=$x, y=$y, tangent=${observation.tangentAngle}, " +
-                "curvature=${observation.curvature}",
         )
     }
 }

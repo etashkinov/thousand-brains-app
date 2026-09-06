@@ -93,6 +93,55 @@ class CharacterGraphLMTest {
     }
 
     @Test
+    fun `possibleMatches and recognitionResult are Unknown before anything is taught or drawn`() {
+        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
+
+        assertTrue(characterGraphLM.possibleMatches().isEmpty())
+        assertEquals(RecognitionResult.Unknown, characterGraphLM.recognitionResult())
+    }
+
+    @Test
+    fun `a confidently recognized shape reports exactly one possible match`() {
+        val memory = GraphMemory()
+        val primitiveLM = PrimitiveLM(lmId = "primitive-0")
+        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+
+        drive(lineShape(), primitiveLM, characterGraphLM)
+        characterGraphLM.teach("line")
+        drive(lShape(), primitiveLM, characterGraphLM)
+        characterGraphLM.teach("L")
+        drive(arcShape(), primitiveLM, characterGraphLM)
+        characterGraphLM.teach("arc")
+
+        val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
+        drive(freshL, primitiveLM, characterGraphLM)
+        val evidence = characterGraphLM.evidenceSnapshot()
+
+        assertEquals(listOf("L"), characterGraphLM.possibleMatches())
+        assertEquals(RecognitionResult.Recognized("L", evidence.getValue("L")), characterGraphLM.recognitionResult())
+    }
+
+    @Test
+    fun `two structurally identical shapes taught under different labels tie`() {
+        val memory = GraphMemory()
+        val primitiveLM = PrimitiveLM(lmId = "primitive-0")
+        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+
+        drive(lShape(), primitiveLM, characterGraphLM)
+        characterGraphLM.teach("L")
+        drive(lShape(), primitiveLM, characterGraphLM)
+        characterGraphLM.teach("L2")
+
+        val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
+        drive(freshL, primitiveLM, characterGraphLM)
+
+        assertEquals(setOf("L", "L2"), characterGraphLM.possibleMatches().toSet())
+        val result = characterGraphLM.recognitionResult()
+        assertTrue("expected Ambiguous but was $result", result is RecognitionResult.Ambiguous)
+        assertEquals(setOf("L", "L2"), (result as RecognitionResult.Ambiguous).labels.toSet())
+    }
+
+    @Test
     fun `state captures taught labels and loadState restores them into a fresh instance`() {
         val memory = GraphMemory()
         val primitiveLM = PrimitiveLM(lmId = "primitive-0")

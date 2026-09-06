@@ -18,3 +18,23 @@ locally cleaner. Diverging from Monty's base design is fine when there's a
 concrete, stated reason this app's domain requires it (e.g. touchscreen 2D
 vs. simulated 3D touch/vision), but should be a deliberate, documented
 exception, not a default.
+
+## Never run adb tests against a connected device
+
+Do not use `adb` (install/launch/shell input/screencap/logcat or otherwise)
+to manually exercise the app on any device connected to this machine, even
+to "just verify" a change. Any `adb devices` entry seen from this machine
+may be the user's own personal phone (connected via wireless debugging),
+not a dedicated/idle test device — it can be actively in the user's hand
+running unrelated apps, and synthetic taps/swipes sent to it land on
+whatever is actually on screen, with real side effects outside this
+project. This already happened once: a verification pass sent touch input
+that landed in the user's social media feed mid-session.
+
+Rely on the `lib` module's unit tests (`./gradlew :lib:test`) for
+verification instead — the module boundary (§2a in
+`IMPLEMENTATION_PLAN.md`) exists specifically so the recognition logic is
+fully testable on the JVM without a device. For `app`-side/UI changes that
+unit tests can't cover, say explicitly that on-device verification wasn't
+performed and let the user test it themselves, rather than driving a
+connected device.

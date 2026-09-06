@@ -33,10 +33,15 @@ interface PrimitiveFeatures {
  * queued rather than held in a single slot — a step with nothing new
  * returns `null`, matching Monty's `get_output() -> Message | None`.
  *
- * "Episode" is one stroke's worth of points (matches
- * IMPLEMENTATION_PLAN.md §3.6's `stepEpisode(observations)`), so
- * [postEpisode] is used to flush whatever run is still open when the
- * stroke ends.
+ * "Episode" is one full character's worth of points, potentially spanning
+ * several strokes — uniform with [com.eta.tbp.lib.lm.CharacterGraphLM] and
+ * matching real Monty's own episode boundary, which resets every SM/LM
+ * identically regardless of tier (see IMPLEMENTATION_PLAN.md §3.6). A pen
+ * lift between strokes of the same character is *not* a separate episode:
+ * it's an ordinary `strokeIndex` discontinuity in the message stream,
+ * force-breaking whatever run is open in [step] — the same way Monty
+ * signals sensor discontinuities (on/off-object) as per-message data
+ * (`use_state`) rather than a distinct lifecycle scope.
  */
 class PrimitiveLM(
     override val lmId: String,
@@ -60,6 +65,7 @@ class PrimitiveLM(
 
     override fun getOutput(): CmpMessage? = pendingOutputs.removeFirstOrNull()
 
+    /** Resets run-tracking state for a new character (not a new stroke — see class doc). */
     override fun preEpisode() {
         runBuffer.clear()
         runType = null
@@ -67,6 +73,7 @@ class PrimitiveLM(
         pendingOutputs.clear()
     }
 
+    /** Flushes whatever run is still open at the end of the character. Strokes within it were already force-segmented at their boundaries by [step]. */
     override fun postEpisode() {
         if (runBuffer.isNotEmpty()) {
             pendingOutputs.addLast(finalizeRun())
@@ -84,6 +91,16 @@ class PrimitiveLM(
     }
 
     private fun step(point: DecodedPoint) {
+        // A pen lift between strokes of the same character is a strokeIndex
+        // discontinuity riding in this same message stream, not a separate
+        // lifecycle scope (see class doc) — force-break whatever run is
+        // open, the same code path as a corner ending a run, so a run never
+        // silently spans a stroke boundary. previousExitAngle deliberately
+        // keeps tracking across the gap; only the run buffer/type reset.
+        if (runBuffer.isNotEmpty() && runBuffer.last().strokeIndex != point.strokeIndex) {
+            pendingOutputs.addLast(finalizeRun())
+        }
+
         // A real corner's turn typically lands on more than one resampled
         // point (arc-length resampling plus a central-difference curvature
         // spreads it out), so consecutive high-curvature points merge into

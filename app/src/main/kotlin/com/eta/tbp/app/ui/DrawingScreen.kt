@@ -4,33 +4,47 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import com.eta.tbp.app.viewmodel.RecognizerViewModel
 
 /**
- * Top-level Phase-0 screen: owns the completed-stroke list so the bottom
- * toolbar's undo/clear act on the same state [DrawingCanvas] renders.
+ * Top-level teach/recognize screen: the canvas feeds completed strokes to
+ * [viewModel], which owns the actual recognition state; this composable
+ * just renders whatever it exposes.
  */
 @Composable
-fun DrawingScreen(modifier: Modifier = Modifier) {
-    var strokes by remember { mutableStateOf<List<List<Offset>>>(emptyList()) }
-
+fun DrawingScreen(
+    viewModel: RecognizerViewModel,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier = modifier.fillMaxSize()) {
         DrawingCanvas(
-            strokes = strokes,
-            onStrokesChange = { strokes = it },
+            strokes = viewModel.strokes,
+            onStrokeCompleted = viewModel::onStrokeCompleted,
+            enabled = viewModel.result == null,
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
-        DrawingToolbar(
-            onUndo = { strokes = strokes.dropLast(1) },
-            onClear = { strokes = emptyList() },
-            canUndo = strokes.isNotEmpty(),
-            canClear = strokes.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth(),
-        )
+        EvidenceBars(evidence = viewModel.evidence, modifier = Modifier.fillMaxWidth())
+        if (viewModel.result != null) {
+            RecognitionResultPanel(
+                result = viewModel.result,
+                taughtLabel = viewModel.taughtLabel,
+                onTeach = viewModel::onTeach,
+                onConfirm = viewModel::onConfirm,
+                onCorrect = viewModel::onCorrect,
+                onNext = viewModel::onNext,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            DrawingToolbar(
+                onUndo = viewModel::onUndo,
+                onClear = viewModel::onClear,
+                onDone = viewModel::onDone,
+                canUndo = viewModel.strokes.isNotEmpty(),
+                canClear = viewModel.strokes.isNotEmpty(),
+                canDone = viewModel.strokes.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }

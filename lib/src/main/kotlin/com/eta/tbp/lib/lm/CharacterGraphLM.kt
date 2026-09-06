@@ -14,10 +14,15 @@ import kotlin.math.atan2
  * [PrimitiveLM] and matches it against every previously-taught
  * [GraphObjectModel] in [memory].
  *
- * "Episode" is one stroke, same scoping as [PrimitiveLM] — genuinely
- * multi-stroke characters are an explicitly deferred problem (see
- * IMPLEMENTATION_PLAN.md's own "least theoretically settled" caveat), not
- * something this phase solves.
+ * "Episode" is one full character, same scoping as [PrimitiveLM] — uniform
+ * across tiers, matching real Monty's own episode boundary (see
+ * IMPLEMENTATION_PLAN.md §3.6). A character may span several strokes:
+ * [nodeBuffer] simply accumulates whatever primitives arrive between
+ * [preEpisode] and [postEpisode], regardless of how many strokes that
+ * spans — genuine cross-stroke compositional generalization is still an
+ * explicitly deferred problem (see IMPLEMENTATION_PLAN.md's own "least
+ * theoretically settled" caveat), but multi-stroke accumulation itself is
+ * not.
  *
  * Evidence accumulates live as primitives arrive (not just once the stroke
  * completes): each new primitive extends this episode's node buffer, and
@@ -114,6 +119,36 @@ class CharacterGraphLM(
         memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes), exemplarCount = 1), label)
     }
 
+    /**
+     * Labels within [xPercentThreshold]% of the max evidence — a simplified
+     * port of Monty's `get_possible_matches()`/`_threshold_possible_matches()`
+     * (`evidence_matching/learning_module.py`): straight percent-of-max
+     * thresholding, dropping Monty's own mean/std branching and its
+     * `len(graph_memory) == 1` special case (not needed at this evidence
+     * scale — same simplification spirit as [GraphMemory.detectNewObject]
+     * vs. Monty's k-steps/exponential version). Strict `>` matches Monty's
+     * own `ge > th` exactly. 0 results means no match (Monty's "no_match"
+     * terminal state), 1 a confident recognition, 2+ a genuine tie.
+     */
+    fun possibleMatches(xPercentThreshold: Float = 10f): List<String> {
+        val evidence = evidenceSnapshot()
+        if (evidence.isEmpty()) return emptyList()
+        val maxEvidence = evidence.values.max()
+        val threshold = if (maxEvidence > 0f) maxEvidence - (maxEvidence * xPercentThreshold / 100f) else 0f
+        return evidence.filter { it.value > threshold }.keys.toList()
+    }
+
+    /** Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI decision. */
+    fun recognitionResult(): RecognitionResult {
+        val matches = possibleMatches()
+        val evidence = evidenceSnapshot()
+        return when (matches.size) {
+            0 -> RecognitionResult.Unknown
+            1 -> RecognitionResult.Recognized(matches.single(), evidence.getValue(matches.single()))
+            else -> RecognitionResult.Ambiguous(matches, evidence)
+        }
+    }
+
     private fun toGraphNode(message: CmpMessage): GraphNode {
         val features = message.nonMorphologicalFeatures
         if (features !is PrimitiveFeatures) {
@@ -138,4 +173,26 @@ class CharacterGraphLM(
             primitiveType = features.type,
         )
     }
+}
+
+/**
+ * The three-way outcome the teach/recognize UI branches on. Mirrors
+ * Monty's own `possible_matches`-driven terminal states
+ * (`evidence_matching/learning_module.py`), not an app-invented concept:
+ * zero possible matches is Monty's own "no_match" terminal state, one is a
+ * normal convergence, and 2+ is Monty's own multi-hypothesis case — this
+ * app surfaces that last case as a question instead of forcing a guess.
+ */
+sealed class RecognitionResult {
+    object Unknown : RecognitionResult()
+
+    data class Recognized(
+        val label: String,
+        val confidence: Float,
+    ) : RecognitionResult()
+
+    data class Ambiguous(
+        val labels: List<String>,
+        val evidence: Map<String, Float>,
+    ) : RecognitionResult()
 }
