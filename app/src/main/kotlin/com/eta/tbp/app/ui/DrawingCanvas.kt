@@ -10,24 +10,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.unit.dp
 
 private const val TAG = "TouchCapture"
-private const val STROKE_WIDTH_PX = 6f
+private val STROKE_WIDTH = 20.dp
+private val STROKE_FEATHER_RADIUS = 2.dp
+private val STROKE_COLOR = Color(0xFF4FC3F7) // light blue
 
 /**
  * Phase-0 scaffold: captures raw [MotionEvent]s and renders strokes live.
  * Deliberately contains no recognition logic — this is the `app`-side
  * adapter that will eventually convert points into `lib`'s
  * `RawTouchObservation`s, kept separate from the brain per the lib/app split.
+ *
+ * @param strokes completed strokes, hoisted so a toolbar (undo/clear) can
+ *   mutate the same list this canvas renders.
+ * @param onStrokesChange invoked with the updated stroke list whenever a
+ *   stroke completes.
  */
 @Composable
-fun DrawingCanvas(modifier: Modifier = Modifier) {
-    var completedStrokes by remember { mutableStateOf<List<List<Offset>>>(emptyList()) }
+fun DrawingCanvas(
+    strokes: List<List<Offset>>,
+    onStrokesChange: (List<List<Offset>>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var activeStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
 
     Canvas(
@@ -46,8 +58,8 @@ fun DrawingCanvas(modifier: Modifier = Modifier) {
 
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             activeStroke = activeStroke + pointsFrom(event)
-                            logStroke(completedStrokes.size, activeStroke)
-                            completedStrokes = completedStrokes + listOf(activeStroke)
+                            logStroke(strokes.size, activeStroke)
+                            onStrokesChange(strokes + listOf(activeStroke))
                             activeStroke = emptyList()
                         }
 
@@ -56,9 +68,9 @@ fun DrawingCanvas(modifier: Modifier = Modifier) {
                         }
                     }
                     true
-                },
+                }.blur(STROKE_FEATHER_RADIUS),
     ) {
-        for (stroke in completedStrokes) {
+        for (stroke in strokes) {
             drawStroke(stroke)
         }
         drawStroke(activeStroke)
@@ -76,12 +88,13 @@ private fun pointsFrom(event: MotionEvent): List<Offset> {
 }
 
 private fun DrawScope.drawStroke(points: List<Offset>) {
+    val strokeWidthPx = STROKE_WIDTH.toPx()
     for (i in 0 until points.size - 1) {
         drawLine(
-            color = Color.Black,
+            color = STROKE_COLOR,
             start = points[i],
             end = points[i + 1],
-            strokeWidth = STROKE_WIDTH_PX,
+            strokeWidth = strokeWidthPx,
             cap = StrokeCap.Round,
         )
     }

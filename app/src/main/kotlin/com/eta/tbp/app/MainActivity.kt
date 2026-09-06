@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import com.eta.tbp.app.ui.DrawingCanvas
+import com.eta.tbp.app.ui.DrawingScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,7 +17,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    DrawingCanvas(modifier = Modifier.fillMaxSize())
+                    DrawingScreen(modifier = Modifier.fillMaxSize())
                 }
             }
         }
