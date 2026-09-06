@@ -72,15 +72,23 @@ This is deliberately **not** a simplified, inspired-by version of Monty's
 design — it ports Monty's actual published interfaces:
 
 - **`CmpMessage`** mirrors Monty's CMP `Message` class: `location`,
-  `morphological_features` (pose vectors + `pose_fully_defined`),
-  `non_morphological_features`, `confidence`, sender identity — the single
+  `morphologicalFeatures` (pose vectors + `poseFullyDefined`),
+  `nonMorphologicalFeatures`, `confidence`, sender identity — the single
   message format used for *every* inter-component exchange, feed-forward or
-  lateral (voting).
+  lateral (voting). One Kotlin-specific improvement on Monty's own Python:
+  `nonMorphologicalFeatures` is typed `Any` rather than a stringly-keyed
+  dict, and each producer (a sensor, a tier) declares its own small marker
+  interface for its payload (`StrokeFeatures`, `PrimitiveFeatures`) instead
+  of `get_feature_by_name("...")` lookups — same message uniformity, no
+  unsafe casts.
 - **`SensorModule`** / **`LearningModule`** are ports of Monty's abstract base
   classes, including the real per-step contract: a **modeling step**
   (`matchingStep`, ~ Monty's `matching_step`) followed by a **voting step**
-  (`receiveVotes`, ~ Monty's `receive_votes`), plus `preEpisode`/`postEpisode`
-  lifecycle hooks and a `stateDict`/`loadStateDict` save-load contract.
+  (`receiveVotes`, ~ Monty's `receive_votes`), a **feed-forward output**
+  (`getOutput`, ~ Monty's `get_output` — always a single-hypothesis point
+  estimate, never a distribution, matching what Monty itself does), plus
+  `preEpisode`/`postEpisode` lifecycle hooks and a `state`/`loadState`
+  save-load contract.
 - **`GraphObjectModel`** / **`GraphMemory`** mirror Monty's own object-model
   storage, down to reusing the concept (and naming intent) of Monty's
   `detect_new_object_k_steps` — the actual mechanism Monty uses to decide
@@ -89,7 +97,8 @@ design — it ports Monty's actual published interfaces:
 - Both tiers implement the **same `LearningModule` interface** — Monty's
   "repeating computational unit" principle: a higher tier's input looks
   exactly like a lower tier's output, so the hierarchy can in principle be
-  extended without new plumbing.
+  extended without new plumbing. (Currently only Tier 2 has real learned
+  memory behind that interface — see Known limitations.)
 
 Full interface listings, code, and an explicit table of what's a faithful
 port vs. a deliberate simplification (mainly: 2D instead of 3D, and no
@@ -106,7 +115,8 @@ the build level, not just by convention:
 - **`lib`** — a plain **Kotlin/JVM module** (`kotlin("jvm")`, not
   `com.android.library`). It contains *all* of the brain: `CmpMessage`, the
   `SensorModule`/`LearningModule` interfaces, `PrimitiveLM`,
-  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`, `MontyOrchestrator`.
+  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher` (the
+  `MontyOrchestrator` wiring them into a real step loop is Phase 4).
   The Android SDK is not on its classpath, so nothing in it can import
   `android.*` even by accident. Its public API only ever exchanges plain
   Kotlin data (data classes, `Map`/`List`, primitives) — never a
@@ -114,9 +124,10 @@ the build level, not just by convention:
 - **`app`** — the Android application module. It owns everything the brain
   doesn't: capturing `MotionEvent`s and converting them into `lib`'s
   `RawTouchObservation`s, the Compose UI, and on-device persistence
-  (writing/reading the bytes `lib`'s `stateDict()` produces). In the
-  organism analogy, `app` is the sensors and motor output — the touchscreen
-  and the screen/storage — everything outside the brain.
+  (writing/reading the data `lib`'s `state()` produces, e.g.
+  `CharacterGraphLM`'s learned `GraphObjectModel`s). In the organism
+  analogy, `app` is the sensors and motor output — the touchscreen and the
+  screen/storage — everything outside the brain.
 
 The payoff: every recognition algorithm (resampling, segmentation, graph
 matching, merge/spawn decisions) is testable with plain JUnit on the JVM —
@@ -148,38 +159,47 @@ Two Gradle modules, matching the [`lib`/`app` split](#two-layers-lib-brain-and-a
 ```
 lib/                        # Kotlin/JVM module — NO Android SDK dependency
   src/main/kotlin/.../
-    cmp/                     # CmpMessage, CmpGoal — the shared message format
-    sensor/                  # SensorModule interface, RawTouchObservation,
-                              # resampling/normalization (pure math, no MotionEvent)
+    cmp/
+      CmpMessage.kt           # CmpMessage, CmpGoal, MorphologicalFeatures, SenderType
+    sensor/
+      RawPoint.kt             # plain 2D point crossing the lib/app boundary
+      RawTouchObservation.kt
+      SensorModule.kt         # generic interface: SensorModule<T>
+      StrokePreprocessor.kt   # resample, normalize, tangent/curvature
+      TouchSensorModule.kt    # SensorModule<RawTouchObservation>; StrokeFeatures payload
     lm/
-      LearningModule.kt       # shared interface
-      PrimitiveLM.kt          # Tier 1
-      CharacterGraphLM.kt     # Tier 2
+      LearningModule.kt       # shared interface: matchingStep/receiveVotes/sendOutVote/getOutput
+      PrimitiveLM.kt          # Tier 1; PrimitiveType, PrimitiveFeatures payload
+      CharacterGraphLM.kt     # Tier 2; evidenceSnapshot(), teach()
     memory/
-      GraphObjectModel.kt
-      GraphMemory.kt          # merge/spawn logic, stateDict()/loadStateDict()
-    orchestrator/
-      MontyOrchestrator.kt
+      GraphObjectModel.kt     # GraphNode, GraphEdge, GraphObjectModel, edgeChainOf
+      GraphMatcher.kt         # order/direction-tolerant matching
+      GraphMemory.kt          # merge/spawn logic, snapshot()/restore()
+    util/
+      Angles.kt               # shared angle-wrapping helpers
   src/test/kotlin/.../        # plain JUnit unit tests: resampling, segmentation,
-                              # matching, merge/spawn, orchestrator step loop —
+                              # matching, merge/spawn, end-to-end recognition —
                               # runs on the JVM, no emulator, no Robolectric
 
 app/                         # Android application module, depends on :lib
   src/main/kotlin/.../
-    sensor/                  # MotionEvent -> RawTouchObservation adapter
-                              # (buffering by pointer down/up; thin, no recognition logic)
-    persistence/             # writes/reads lib's stateDict() bytes to Android storage
+    sensor/
+      TouchObservationAdapter.kt  # Offset -> RawPoint mapping (thin, no recognition logic)
     ui/
-      DrawingCanvas.kt
-      TeachRecognizeScreen.kt
-      DisambiguationDialog.kt
-    MainActivity.kt          # wires MontyOrchestrator + adapters together
+      DrawingCanvas.kt        # MotionEvent capture + live stroke rendering
+      DrawingScreen.kt        # owns stroke state, composes canvas + toolbar
+      DrawingToolbar.kt       # undo/clear
+    MainActivity.kt
   src/androidTest/.../        # adapter + Compose UI smoke tests only
 
-docs/
-  IMPLEMENTATION_PLAN.md      # phased build plan, full interface code, mapping table
-  README.md                   # this file
+IMPLEMENTATION_PLAN.md        # phased build plan, full interface code, mapping table
+README.md                     # this file
+CLAUDE.md                     # notes for AI assistants working on this repo
 ```
+
+`MontyOrchestrator` (wiring the sensor and both tiers into a real step
+loop) and the `app`-side teach/recognize UI and persistence adapter are
+Phase 4+ — not built yet; see Status/Roadmap.
 
 ---
 
@@ -189,13 +209,26 @@ See **[`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md)** for the full
 phase-by-phase plan (Phases 0–7 for the touchscreen app, Phase 8 for the
 static-image/multi-LM-voting stretch goal) and testing strategy.
 
-**Not yet built** — this is a from-scratch project plan, not a working app.
-Start at Phase 0.
+**Phases 0–3 are done:** `lib`'s full brain pipeline — touch resampling
+(Phase 1), primitive segmentation (Phase 2), and character-graph learning
+and recognition (Phase 3) — is built and unit-tested end to end (38 tests),
+including each phase's own concrete exit criterion. There's no UI hooked up
+to it yet and no persisted state between runs — **Phase 4** (wiring the
+touch canvas already in `app` to this pipeline, plus the teach/recognize
+screens) is next.
 
 ---
 
 ## Known limitations (by design, not oversight)
 
+- **Only Tier 2 has real learned memory.** In Monty, every LM at every tier
+  builds and matches against its own learned graph model. `CharacterGraphLM`
+  does; `PrimitiveLM` currently classifies line/arc/corner with fixed
+  geometric thresholds, not a learned model — it satisfies the
+  `LearningModule` interface without yet being a genuine *learning* module.
+  Reasonable for now because primitives are a small, closed, geometrically-
+  definable vocabulary unlike open-ended taught characters, but it's a real
+  simplification worth knowing about, not an oversight.
 - **No general compositional part-swapping.** Real hierarchical composition
   (recognizing a novel combination of familiar parts) is flagged as immature
   even in Monty's own published work; this app's multi-variant-per-label
@@ -221,6 +254,6 @@ Start at Phase 0.
   Learning and Inference" — https://arxiv.org/html/2507.04494
 - Wobbrock, Wilson & Li, "$1 Unistroke Recognizer" (UIST 2007) — order/
   direction-invariant point-cloud matching, relevant prior art for
-  `GraphMemory.matchScore` — https://depts.washington.edu/acelab/proj/dollar/index.html
+  `GraphMatcher.matchScore` — https://depts.washington.edu/acelab/proj/dollar/index.html
 - Handwriting trajectory recovery / offline-to-online conversion literature —
   relevant background for the Phase 8 stretch goal.
