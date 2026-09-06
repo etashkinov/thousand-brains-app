@@ -37,15 +37,13 @@ data class MorphologicalFeatures(
 open class CmpMessage(
     val location: FloatArray?,
     val morphologicalFeatures: MorphologicalFeatures?,
-    val nonMorphologicalFeatures: Map<String, Any>,
+    val nonMorphologicalFeatures: Any,
     val confidence: Float,
     val passMessage: Boolean,
     val senderId: String,
     val senderType: SenderType,
     val processFeaturesInLm: Boolean,
 ) {
-    fun getFeatureByName(name: String): Any? = nonMorphologicalFeatures[name]
-
     fun getPoseVectors(): Array<FloatArray>? = morphologicalFeatures?.poseVectors
 
     fun isFromSm(): Boolean = senderType == SenderType.SM
@@ -58,7 +56,7 @@ open class CmpMessage(
 class CmpGoal(
     location: FloatArray?,
     morphologicalFeatures: MorphologicalFeatures?,
-    nonMorphologicalFeatures: Map<String, Any>,
+    nonMorphologicalFeatures: Any,
     confidence: Float,
     passMessage: Boolean,
     senderId: String,

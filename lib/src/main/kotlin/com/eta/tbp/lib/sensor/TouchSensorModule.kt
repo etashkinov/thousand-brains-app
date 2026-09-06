@@ -6,6 +6,12 @@ import com.eta.tbp.lib.cmp.SenderType
 import kotlin.math.cos
 import kotlin.math.sin
 
+interface StrokeFeatures {
+    val curvature: Float
+    val strokeIndex: Int
+    val orderInStroke: Int
+}
+
 /**
  * Converts already-resampled [RawTouchObservation]s (produced upstream by
  * [StrokePreprocessor]) into [CmpMessage]s. Stateless: resampling already
@@ -14,24 +20,24 @@ import kotlin.math.sin
  */
 class TouchSensorModule(
     override val sensorId: String,
-) : SensorModule {
-    override fun step(rawObservation: RawTouchObservation): CmpMessage =
+) : SensorModule<RawTouchObservation> {
+    override fun step(observation: RawTouchObservation): CmpMessage =
         CmpMessage(
-            location = rawObservation.position.copyOf(),
+            location = observation.position.copyOf(),
             morphologicalFeatures =
                 MorphologicalFeatures(
-                    poseVectors = tangentPoseVectors(rawObservation.tangentAngle),
+                    poseVectors = tangentPoseVectors(observation.tangentAngle),
                     // Every resampled point already carries a tangent angle (even a
                     // single-point stroke gets one via StrokePreprocessor's fallback),
                     // so pose is always well-defined in v1 — no ambiguous-pose case yet.
                     poseFullyDefined = true,
                 ),
             nonMorphologicalFeatures =
-                mapOf(
-                    "curvature" to rawObservation.curvature,
-                    "stroke_index" to rawObservation.strokeIndex,
-                    "order_in_stroke" to rawObservation.orderInStroke,
-                ),
+                object : StrokeFeatures {
+                    override val curvature: Float = observation.curvature
+                    override val strokeIndex: Int = observation.strokeIndex
+                    override val orderInStroke: Int = observation.orderInStroke
+                },
             confidence = 1f,
             passMessage = true,
             senderId = sensorId,

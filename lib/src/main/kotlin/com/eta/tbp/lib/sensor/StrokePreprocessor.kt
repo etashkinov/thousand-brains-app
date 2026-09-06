@@ -1,5 +1,6 @@
 package com.eta.tbp.lib.sensor
 
+import com.eta.tbp.lib.util.wrapAngle
 import kotlin.math.atan2
 
 /**
@@ -14,8 +15,6 @@ object StrokePreprocessor {
     const val DEFAULT_RESAMPLE_COUNT = 48
 
     private const val LENGTH_EPSILON = 1e-4f
-    private val PI_F = kotlin.math.PI.toFloat()
-    private val TWO_PI_F = 2f * PI_F
 
     /**
      * Walks the polyline's cumulative arc length and linearly interpolates
@@ -81,8 +80,13 @@ object StrokePreprocessor {
      * point, or from the previous point at the ends). Curvature is the
      * wrapped turning-angle delta between consecutive segments — a turning
      * angle per resampled step, not strict 1/radius curvature, which is
-     * sufficient for Phase 2's tangent-stability segmentation. Both are 0
-     * at a stroke's single point (undefined direction).
+     * sufficient for Phase 2's tangent-stability segmentation. A stroke's
+     * first/last point has no second neighbor to center a difference on, so
+     * its curvature is clamped to its nearest interior neighbor's rather
+     * than forced to 0 — otherwise every stroke would report an artificial
+     * "flattening out" right at its endpoints, which Phase 2's segmenter
+     * would mistake for the start of a straight line. Both are 0 when there
+     * are too few points to define a curvature at all.
      */
     fun tangentsAndCurvatures(points: List<RawPoint>): List<Pair<Float, Float>> {
         if (points.size < 2) return points.map { 0f to 0f }
@@ -98,23 +102,16 @@ object StrokePreprocessor {
                 atan2(direction.y, direction.x)
             }
 
-        val curvatures =
-            List(points.size) { i ->
-                if (i == 0 || i == points.size - 1) {
-                    0f
-                } else {
-                    wrapAngle(tangents[i + 1] - tangents[i - 1])
-                }
-            }
+        if (points.size < 3) return tangents.map { it to 0f }
+
+        val curvatures = MutableList(points.size) { 0f }
+        for (i in 1 until points.size - 1) {
+            curvatures[i] = wrapAngle(tangents[i + 1] - tangents[i - 1])
+        }
+        curvatures[0] = curvatures[1]
+        curvatures[points.size - 1] = curvatures[points.size - 2]
 
         return tangents.zip(curvatures)
-    }
-
-    private fun wrapAngle(angle: Float): Float {
-        var wrapped = angle
-        while (wrapped > PI_F) wrapped -= TWO_PI_F
-        while (wrapped < -PI_F) wrapped += TWO_PI_F
-        return wrapped
     }
 
     /** Chains resample -> normalize -> tangent/curvature into observations. */

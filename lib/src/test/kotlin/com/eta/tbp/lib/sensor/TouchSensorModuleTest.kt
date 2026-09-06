@@ -29,9 +29,10 @@ class TouchSensorModuleTest {
         assertEquals(1f, message.confidence, 1e-6f)
         assertTrue(message.passMessage)
         assertTrue(message.processFeaturesInLm)
-        assertEquals(0.1f, message.getFeatureByName("curvature"))
-        assertEquals(1, message.getFeatureByName("stroke_index"))
-        assertEquals(4, message.getFeatureByName("order_in_stroke"))
+        val features = message.nonMorphologicalFeatures as StrokeFeatures
+        assertEquals(0.1f, features.curvature, 1e-6f)
+        assertEquals(1, features.strokeIndex)
+        assertEquals(4, features.orderInStroke)
         assertTrue(message.morphologicalFeatures?.poseFullyDefined == true)
     }
 

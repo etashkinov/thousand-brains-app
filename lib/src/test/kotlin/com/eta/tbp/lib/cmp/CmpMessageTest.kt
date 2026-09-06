@@ -15,7 +15,7 @@ class CmpMessageTest {
                     poseVectors = arrayOf(floatArrayOf(1f, 0f), floatArrayOf(0f, 1f)),
                     poseFullyDefined = true,
                 ),
-            nonMorphologicalFeatures = mapOf("primitive_type" to "line"),
+            nonMorphologicalFeatures = "line",
             confidence = 0.9f,
             passMessage = true,
             senderId = "sm-0",
@@ -24,10 +24,9 @@ class CmpMessageTest {
         )
 
     @Test
-    fun `getFeatureByName reads from non-morphological features`() {
+    fun `nonMorphologicalFeatures carries the producer's own typed payload`() {
         val message = sampleMessage()
-        assertEquals("line", message.getFeatureByName("primitive_type"))
-        assertNull(message.getFeatureByName("missing"))
+        assertEquals("line", message.nonMorphologicalFeatures)
     }
 
     @Test
