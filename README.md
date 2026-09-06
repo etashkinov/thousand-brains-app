@@ -98,6 +98,35 @@ system here) are in **[`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md)**.
 
 ---
 
+## Two layers: `lib` (brain) and `app` (Android)
+
+The codebase is split into two Gradle modules, and the split is enforced at
+the build level, not just by convention:
+
+- **`lib`** — a plain **Kotlin/JVM module** (`kotlin("jvm")`, not
+  `com.android.library`). It contains *all* of the brain: `CmpMessage`, the
+  `SensorModule`/`LearningModule` interfaces, `PrimitiveLM`,
+  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`, `MontyOrchestrator`.
+  The Android SDK is not on its classpath, so nothing in it can import
+  `android.*` even by accident. Its public API only ever exchanges plain
+  Kotlin data (data classes, `Map`/`List`, primitives) — never a
+  `MotionEvent`, `Context`, or Compose type.
+- **`app`** — the Android application module. It owns everything the brain
+  doesn't: capturing `MotionEvent`s and converting them into `lib`'s
+  `RawTouchObservation`s, the Compose UI, and on-device persistence
+  (writing/reading the bytes `lib`'s `stateDict()` produces). In the
+  organism analogy, `app` is the sensors and motor output — the touchscreen
+  and the screen/storage — everything outside the brain.
+
+The payoff: every recognition algorithm (resampling, segmentation, graph
+matching, merge/spawn decisions) is testable with plain JUnit on the JVM —
+`./gradlew :lib:test` — with no emulator and no Robolectric, in seconds.
+`app` stays thin: a couple of adapters and some UI, tested separately and
+minimally. See **[`IMPLEMENTATION_PLAN.md`, §2a](./IMPLEMENTATION_PLAN.md#2a-module-boundary-lib-brain-vs-app-android)**
+for the full boundary rules.
+
+---
+
 ## Key design decisions (and why)
 
 | Decision | Rationale |
@@ -108,32 +137,48 @@ system here) are in **[`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md)**.
 | Multiple graph variants per label, not one generalized template | Real handwriting varies in stroke count/order, not just size/slant; forcing one graph to cover all of it either overfits or corrupts the model |
 | Ties are reported, not resolved by a forced guess | A tie is a correct output of evidence accumulation — some character pairs (6/9, O/0) are genuinely, structurally ambiguous from shape alone, and the app should say so |
 | Static image input is a separate, later milestone | Requires trajectory reconstruction (skeleton-glide + multi-LM voting to resolve stroke-order/crossing ambiguity) — a materially harder, well-studied problem in its own right ("handwriting trajectory recovery" in the literature), not a minor variant of the core app |
+| `lib`/`app` split, `lib` has zero Android SDK dependencies | Keeps the brain logic unit-testable on the JVM in milliseconds (no emulator, no Robolectric), and makes it obvious at build time — not just by convention — when device-specific code has crept into the wrong place |
 
 ---
 
 ## Project structure
 
+Two Gradle modules, matching the [`lib`/`app` split](#two-layers-lib-brain-and-app-android) above:
+
 ```
-app/
+lib/                        # Kotlin/JVM module — NO Android SDK dependency
   src/main/kotlin/.../
-    cmp/                 # CmpMessage, CmpGoal — the shared message format
-    sensor/              # SensorModule, RawTouchObservation, resampling/normalization
+    cmp/                     # CmpMessage, CmpGoal — the shared message format
+    sensor/                  # SensorModule interface, RawTouchObservation,
+                              # resampling/normalization (pure math, no MotionEvent)
     lm/
-      PrimitiveLM.kt      # Tier 1
-      CharacterGraphLM.kt # Tier 2
+      LearningModule.kt       # shared interface
+      PrimitiveLM.kt          # Tier 1
+      CharacterGraphLM.kt     # Tier 2
     memory/
       GraphObjectModel.kt
-      GraphMemory.kt      # merge/spawn logic, persistence
+      GraphMemory.kt          # merge/spawn logic, stateDict()/loadStateDict()
     orchestrator/
       MontyOrchestrator.kt
+  src/test/kotlin/.../        # plain JUnit unit tests: resampling, segmentation,
+                              # matching, merge/spawn, orchestrator step loop —
+                              # runs on the JVM, no emulator, no Robolectric
+
+app/                         # Android application module, depends on :lib
+  src/main/kotlin/.../
+    sensor/                  # MotionEvent -> RawTouchObservation adapter
+                              # (buffering by pointer down/up; thin, no recognition logic)
+    persistence/             # writes/reads lib's stateDict() bytes to Android storage
     ui/
       DrawingCanvas.kt
       TeachRecognizeScreen.kt
       DisambiguationDialog.kt
-  src/test/kotlin/.../    # unit tests for resampling, segmentation, matching
+    MainActivity.kt          # wires MontyOrchestrator + adapters together
+  src/androidTest/.../        # adapter + Compose UI smoke tests only
+
 docs/
-  IMPLEMENTATION_PLAN.md  # phased build plan, full interface code, mapping table
-  README.md               # this file
+  IMPLEMENTATION_PLAN.md      # phased build plan, full interface code, mapping table
+  README.md                   # this file
 ```
 
 ---

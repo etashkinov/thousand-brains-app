@@ -23,6 +23,7 @@ format and `LearningModule`/`SensorModule` interfaces.
 | Ambiguity handling | Report ties explicitly ("6 or 9?") rather than force a guess | A tie is a correct output of evidence accumulation, not a failure |
 | Static/photo input | Out of scope for v1; Phase 8 stretch goal | Requires trajectory reconstruction (skeleton glide) — materially harder, separate milestone |
 | Persistence | `stateDict()`/`loadStateDict()` → JSON | Mirrors Monty's own save/load contract |
+| Module boundary | `lib` (pure Kotlin/JVM, zero Android SDK deps) + `app` (Android) | Brain logic must be unit-testable on the JVM in milliseconds, without an emulator or Robolectric; also keeps the door open to a non-Android host later |
 
 ---
 
@@ -62,6 +63,58 @@ format and `LearningModule`/`SensorModule` interfaces.
 
 Orchestration follows Monty's own step loop: collect observation → route to
 SM → step LM (modeling) → step LM (voting) → repeat. See §5 for the code.
+
+---
+
+## 2a. Module Boundary: `lib` (brain) vs `app` (Android)
+
+The codebase is split into two Gradle modules with a hard, enforced boundary
+between them — this isn't a package-naming convention, it's a build-level
+guarantee:
+
+| Module | Gradle plugin | Contains | May depend on Android SDK? |
+|---|---|---|---|
+| **`lib`** | `kotlin("jvm")` — a plain Kotlin/JVM module, **not** `com.android.library` | Every "brain" class: `CmpMessage`/`CmpGoal`, the `SensorModule`/`LearningModule` interfaces, `PrimitiveLM`, `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`, `MontyOrchestrator` | **No.** The Android SDK is not even on `lib`'s compile classpath, so an accidental `import android.*` is a compile error, not a lint warning. |
+| **`app`** | `com.android.application`, depends on `lib` | Jetpack Compose UI, `MotionEvent` capture, on-device persistence (file/DataStore), and all wiring that constructs `lib`'s orchestrator and feeds it converted observations | Yes — this is where all device-specific I/O lives |
+
+Think of `lib` as the organism's brain and `app` as everything else the
+organism needs to act in the world — its sensors (the touchscreen) and its
+motor/output systems (rendering, haptics, storage). The brain never touches
+the nervous system's hardware directly; it only exchanges the same plain
+Kotlin data (`CmpMessage`, `RawTouchObservation`, `Map<String, Any>`
+state) that `app` translates to and from real device APIs.
+
+Concretely, this means:
+
+- **No Android types cross the `lib` public API, ever.** `SensorModule.step()`
+  takes a `RawTouchObservation` — a plain data class of floats/ints — never a
+  `MotionEvent`. Converting a `MotionEvent` stream into `RawTouchObservation`s
+  (buffering by pointer down/up, arc-length resampling, normalization) is
+  `app`'s job, implemented as a thin adapter that itself contains no
+  recognition logic, so it doesn't need dedicated test coverage beyond a
+  smoke test.
+- **Persistence is split the same way.** `lib`'s `stateDict()`/
+  `loadStateDict()` contract only produces/consumes plain Kotlin
+  (`Map<String, Any>`, or a `@Serializable` data class via
+  `kotlinx.serialization` — itself pure Kotlin, safe to depend on from
+  `lib`). Actual file/DataStore I/O on Android happens in `app`, which calls
+  `lib` to get the bytes and then writes/reads them.
+- **UI state (evidence bars, disambiguation prompts) is derived, not owned,
+  by `lib`.** `lib` exposes plain data (current evidence per label, tie
+  detection) that `app`'s Compose screens render; `lib` never imports
+  `androidx.compose.*`.
+- **Every class in `lib` is unit-testable with plain JUnit on the JVM** —
+  `./gradlew :lib:test` runs with no emulator, no Robolectric, no Android
+  Gradle plugin in the loop, in seconds. This is the main practical payoff of
+  the split: the entire recognition algorithm (resampling → segmentation →
+  graph matching → merge/spawn) can be developed and regression-tested
+  headlessly, and `app`'s test surface shrinks to a handful of thin adapters
+  and UI smoke tests (see §6).
+
+When adding a feature, default to putting the logic in `lib` and ask
+explicitly whether any part of it truly needs an Android API (e.g. reading a
+`MotionEvent`, writing a file, showing a Compose dialog) — if not, it belongs
+in `lib`.
 
 ---
 
@@ -305,9 +358,14 @@ redesign.
 ## 5. Phased Build Plan
 
 ### Phase 0 — Project Setup (½–1 day)
-New Android Studio project, Kotlin, Jetpack Compose. `Canvas` composable
-capturing `MotionEvent` and rendering strokes live. No recognition logic yet.
-**Exit:** draw a character, see it rendered, dump raw stroke points to Logcat.
+New Android Studio project with **two Gradle modules from day one**: `lib`
+(`kotlin("jvm")` plugin, zero Android dependencies) and `app`
+(`com.android.application`, depends on `lib`) — see §2a. Set up Jetpack
+Compose in `app`. `Canvas` composable in `app` capturing `MotionEvent` and
+rendering strokes live. No recognition logic yet.
+**Exit:** draw a character, see it rendered, dump raw stroke points to
+Logcat; `./gradlew :lib:test` runs (even with zero tests) to confirm the
+module boundary compiles with no Android SDK on its classpath.
 
 ### Phase 1 — SensorModule: Capture & Resampling (1–2 days)
 Buffer strokes by pointer down/up. Implement arc-length resampling to N
@@ -380,9 +438,29 @@ Treat both as ties surfaced to the user, same as the 6/9 case.
 
 ## 6. Testing Strategy
 
-- **Unit tests** for resampling, normalization, and primitive segmentation —
-  pure functions on point arrays (perfect square, perfect circle, straight
-  line at various angles).
+Testing follows the module split in §2a: almost everything worth testing
+lives in `lib` and runs as plain JUnit on the JVM; `app`'s test surface is
+deliberately small.
+
+- **`lib` unit tests (`:lib:test`, plain JUnit, JVM only — no emulator, no
+  Robolectric):**
+  - Resampling, normalization, and primitive segmentation — pure functions
+    on point arrays (perfect square, perfect circle, straight line at
+    various angles).
+  - `GraphMemory.matchScore` / `detectNewObject` merge-vs-spawn decisions
+    against hand-built `GraphObjectModel` fixtures.
+  - `MontyOrchestrator` step-loop behavior driven entirely by synthetic
+    `RawTouchObservation` sequences — no real touchscreen or device needed.
+  - `stateDict()`/`loadStateDict()` round-trips on plain Kotlin data.
+  - Because none of this touches Android, these tests are fast enough to run
+    on every save and in CI without a device/emulator.
+- **`app` tests (thin adapters + UI only):**
+  - `MotionEvent` → `RawTouchObservation` conversion (buffering, resampling
+    hookup) — a small, mockable adapter, tested with a couple of synthetic
+    `MotionEvent` sequences.
+  - Persistence adapter (`lib`'s bytes ↔ Android file/DataStore).
+  - Compose UI smoke tests (teach/recognize screen renders, disambiguation
+    dialog appears on a tie) — no recognition logic duplicated here.
 - **Manual regression set** — once ~10 labels are taught, keep a fixed
   redraw script to catch regressions after any threshold/algorithm change.
 - **Deliberate ambiguity tests** — at least one pair expected to tie (your
