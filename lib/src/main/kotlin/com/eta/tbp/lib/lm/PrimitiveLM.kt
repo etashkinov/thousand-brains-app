@@ -25,13 +25,13 @@ interface PrimitiveFeatures {
  * into line/arc/corner runs by tangent-angle stability.
  *
  * Online by design, matching the orchestrator's per-point step loop
- * (`matchingStep`/`sendOutVote` called once per point, not once per
+ * (`matchingStep`/`getOutput` called once per point, not once per
  * stroke): a run accumulates across calls until a point breaks its
  * hypothesis, at which point the finished run is queued for the next
- * [sendOutVote] call(s) as a [CmpMessage] with `passMessage = true`. A run
- * ending and a corner can both complete on the same incoming point, so
- * finished primitives are queued rather than held in a single slot — a
- * step with nothing new returns a `passMessage = false` placeholder.
+ * [getOutput] call(s) as a [CmpMessage]. A run ending and a corner can
+ * both complete on the same incoming point, so finished primitives are
+ * queued rather than held in a single slot — a step with nothing new
+ * returns `null`, matching Monty's `get_output() -> Message | None`.
  *
  * "Episode" is one stroke's worth of points (matches
  * IMPLEMENTATION_PLAN.md §3.6's `stepEpisode(observations)`), so
@@ -44,7 +44,7 @@ class PrimitiveLM(
     private val runBuffer = mutableListOf<DecodedPoint>()
     private var runType: PrimitiveType? = null
     private var previousExitAngle = 0f
-    private val pendingVotes = ArrayDeque<CmpMessage>()
+    private val pendingOutputs = ArrayDeque<CmpMessage>()
 
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
@@ -52,22 +52,24 @@ class PrimitiveLM(
         }
     }
 
-    override fun receiveVotes(votes: List<CmpMessage>) {
+    override fun receiveVotes(votes: List<Any>) {
         // No-op in v1: a single LM per tier, nothing to cross-check yet.
     }
 
-    override fun sendOutVote() = pendingVotes.removeFirstOrNull() ?: noPrimitiveYet()
+    override fun sendOutVote(): Any? = null // No siblings to vote with in v1.
+
+    override fun getOutput(): CmpMessage? = pendingOutputs.removeFirstOrNull()
 
     override fun preEpisode() {
         runBuffer.clear()
         runType = null
         previousExitAngle = 0f
-        pendingVotes.clear()
+        pendingOutputs.clear()
     }
 
     override fun postEpisode() {
         if (runBuffer.isNotEmpty()) {
-            pendingVotes.addLast(finalizeRun())
+            pendingOutputs.addLast(finalizeRun())
         }
     }
 
@@ -88,7 +90,7 @@ class PrimitiveLM(
         // one CORNER run rather than each emitting its own primitive.
         if (abs(point.curvature) >= CORNER_CURVATURE_THRESHOLD) {
             if (runType != PrimitiveType.CORNER) {
-                if (runBuffer.isNotEmpty()) pendingVotes.addLast(finalizeRun())
+                if (runBuffer.isNotEmpty()) pendingOutputs.addLast(finalizeRun())
                 runType = PrimitiveType.CORNER
             }
             runBuffer.add(point)
@@ -96,7 +98,7 @@ class PrimitiveLM(
         }
 
         if (runType == PrimitiveType.CORNER) {
-            pendingVotes.addLast(finalizeRun())
+            pendingOutputs.addLast(finalizeRun())
             runBuffer.add(point)
             return
         }
@@ -113,7 +115,7 @@ class PrimitiveLM(
             }
 
             RunDecision.Break -> {
-                pendingVotes.addLast(finalizeRun())
+                pendingOutputs.addLast(finalizeRun())
                 runBuffer.add(point)
             }
         }
@@ -204,18 +206,6 @@ class PrimitiveLM(
             processFeaturesInLm = true,
         )
     }
-
-    private fun noPrimitiveYet(): CmpMessage =
-        CmpMessage(
-            location = null,
-            morphologicalFeatures = null,
-            nonMorphologicalFeatures = Unit,
-            confidence = 0f,
-            passMessage = false,
-            senderId = lmId,
-            senderType = SenderType.LM,
-            processFeaturesInLm = false,
-        )
 
     private fun centroid(points: List<DecodedPoint>): FloatArray {
         var sumX = 0f

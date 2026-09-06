@@ -34,9 +34,7 @@ class PrimitiveLMTest {
         into: MutableList<CmpMessage>,
     ) {
         while (true) {
-            val vote = lm.sendOutVote()
-            if (!vote.passMessage) break
-            into += vote
+            into += lm.getOutput() ?: break
         }
     }
 
@@ -79,5 +77,12 @@ class PrimitiveLMTest {
         assertEquals(Unit, lm.state())
         lm.setExperimentMode(ExperimentMode.TRAIN)
         lm.loadState(Unit)
+    }
+
+    @Test
+    fun `voting is a no-op in v1`() {
+        val lm = PrimitiveLM(lmId = "primitive-0")
+        assertEquals(null, lm.sendOutVote())
+        lm.receiveVotes(emptyList())
     }
 }

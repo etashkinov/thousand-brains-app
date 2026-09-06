@@ -9,11 +9,6 @@ import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.edgeChainOf
 import kotlin.math.atan2
 
-/** Tier 2's output: current recognition evidence per taught label. */
-interface RecognitionFeatures {
-    val evidenceByLabel: Map<String, Float>
-}
-
 /**
  * Tier 2: builds a character's graph from the primitive stream coming from
  * [PrimitiveLM] and matches it against every previously-taught
@@ -27,12 +22,18 @@ interface RecognitionFeatures {
  * Evidence accumulates live as primitives arrive (not just once the stroke
  * completes): each new primitive extends this episode's node buffer, and
  * [GraphMatcher.partialMatchScore] scores that growing shape against every
- * stored model's same-length window. [sendOutVote] reports that snapshot
- * directly — one message with a per-label map, not one message per
- * hypothesis with an object id. Per-hypothesis correlation is a
- * cross-LM-voting concern (Phase 8, once a second LM actually needs to
- * correlate against this one's hypotheses); a lone LM with no siblings has
- * no one to correlate with yet.
+ * stored model's same-length window.
+ *
+ * [getOutput] mirrors real Monty's `get_output()`: a single-hypothesis
+ * point estimate (the current best label + its confidence), structurally
+ * identical to what a SensorModule would emit — never a full evidence map.
+ * Monty puts multi-hypothesis evidence in an entirely separate mechanism
+ * (`send_out_vote()`'s dict keyed by object id, not a `Message` at all),
+ * not inside the uniform feed-forward message. The full evidence-by-label
+ * breakdown this app's UI needs (live bars, tie detection) is exposed via
+ * [evidenceSnapshot] instead — a direct query a caller makes, the same way
+ * Monty's own logging/experiment harness reads an LM's internal hypothesis
+ * state directly rather than through a `Message`.
  *
  * Teaching is deliberately *not* part of the [LearningModule] interface:
  * Monty's own framework gets ground-truth labels from a labeled dataset,
@@ -55,32 +56,37 @@ class CharacterGraphLM(
         }
     }
 
-    override fun receiveVotes(votes: List<CmpMessage>) {
+    override fun receiveVotes(votes: List<Any>) {
         // No-op in v1: a single LM per tier, nothing to cross-check yet.
     }
 
-    override fun sendOutVote(): CmpMessage {
-        val labels = memory.allLabels()
-        if (nodeBuffer.isEmpty() || labels.isEmpty()) return noEvidenceYet()
+    override fun sendOutVote(): Any? = null // No siblings to vote with in v1.
 
-        val evidenceByLabel =
-            labels.associateWith { label ->
-                memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodeBuffer) }
-            }
-
+    override fun getOutput(): CmpMessage? {
+        val topEntry = evidenceSnapshot().maxByOrNull { it.value } ?: return null
         return CmpMessage(
             location = null,
             morphologicalFeatures = null,
-            nonMorphologicalFeatures =
-                object : RecognitionFeatures {
-                    override val evidenceByLabel = evidenceByLabel
-                },
-            confidence = evidenceByLabel.values.max(),
+            nonMorphologicalFeatures = topEntry.key,
+            confidence = topEntry.value,
             passMessage = true,
             senderId = lmId,
             senderType = SenderType.LM,
             processFeaturesInLm = true,
         )
+    }
+
+    /**
+     * The full current evidence breakdown across every taught label — for
+     * direct introspection (UI live-evidence bars, tie detection), not
+     * something the CMP message carries. Empty if nothing's been observed
+     * yet this episode or nothing's been taught.
+     */
+    fun evidenceSnapshot(): Map<String, Float> {
+        if (nodeBuffer.isEmpty()) return emptyMap()
+        return memory.allLabels().associateWith { label ->
+            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodeBuffer) }
+        }
     }
 
     override fun preEpisode() {
@@ -132,16 +138,4 @@ class CharacterGraphLM(
             primitiveType = features.type,
         )
     }
-
-    private fun noEvidenceYet(): CmpMessage =
-        CmpMessage(
-            location = null,
-            morphologicalFeatures = null,
-            nonMorphologicalFeatures = Unit,
-            confidence = 0f,
-            passMessage = false,
-            senderId = lmId,
-            senderType = SenderType.LM,
-            processFeaturesInLm = false,
-        )
 }

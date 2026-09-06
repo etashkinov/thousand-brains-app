@@ -38,19 +38,11 @@ class CharacterGraphLMTest {
         primitiveLM: PrimitiveLM,
         characterGraphLM: CharacterGraphLM,
     ) {
-        val votes = mutableListOf<CmpMessage>()
+        val outputs = mutableListOf<CmpMessage>()
         while (true) {
-            val vote = primitiveLM.sendOutVote()
-            if (!vote.passMessage) break
-            votes += vote
+            outputs += primitiveLM.getOutput() ?: break
         }
-        if (votes.isNotEmpty()) characterGraphLM.matchingStep(votes)
-    }
-
-    private fun evidenceOf(characterGraphLM: CharacterGraphLM): Map<String, Float> {
-        val vote = characterGraphLM.sendOutVote()
-        check(vote.passMessage) { "expected recognition evidence but got none" }
-        return (vote.nonMorphologicalFeatures as RecognitionFeatures).evidenceByLabel
+        if (outputs.isNotEmpty()) characterGraphLM.matchingStep(outputs)
     }
 
     private fun lineShape(): List<RawPoint> = List(30) { i -> RawPoint(i.toFloat(), i.toFloat()) }
@@ -87,11 +79,17 @@ class CharacterGraphLMTest {
         // A *fresh* instance of "L": different point density and a different scale.
         val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
         drive(freshL, primitiveLM, characterGraphLM)
-        val evidence = evidenceOf(characterGraphLM)
+        val evidence = characterGraphLM.evidenceSnapshot()
 
         assertTrue("expected all 3 labels scored: $evidence", evidence.keys.containsAll(setOf("line", "L", "arc")))
         assertEquals("L", evidence.maxByOrNull { it.value }?.key)
         assertTrue("expected a strong match but was ${evidence["L"]}", evidence.getValue("L") > 0.9f)
+
+        // getOutput() collapses to the same top hypothesis evidenceSnapshot() reports,
+        // matching Monty's get_output(): a single-hypothesis point estimate, not a map.
+        val output = requireNotNull(characterGraphLM.getOutput())
+        assertEquals("L", output.nonMorphologicalFeatures)
+        assertEquals(evidence.getValue("L"), output.confidence, 1e-6f)
     }
 
     @Test
