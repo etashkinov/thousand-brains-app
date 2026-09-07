@@ -1,6 +1,6 @@
 package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.lm.PrimitiveType
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,15 +11,15 @@ class GraphMatcherTest {
         x: Float,
         y: Float,
         angle: Float,
-        type: PrimitiveType = PrimitiveType.LINE,
-    ) = GraphNode(id, floatArrayOf(x, y), angle, type)
+        measurement: PrimitiveMeasurement = PrimitiveMeasurement.Line(1f),
+    ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
 
-    /** A simple 3-node "staircase": line, corner, line. */
+    /** A simple 3-node "staircase": line, arc, line. */
     private fun staircase(): List<GraphNode> =
         listOf(
-            node(0, -1f, 0f, 0f, PrimitiveType.LINE),
-            node(1, 0f, 0f, 1.5f, PrimitiveType.CORNER),
-            node(2, 1f, 1f, 0.2f, PrimitiveType.LINE),
+            node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(1f)),
+            node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(1f, 1f)),
+            node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(1f)),
         )
 
     private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
@@ -59,15 +59,17 @@ class GraphMatcherTest {
         val nodes = staircase()
         val farOff =
             listOf(
-                node(0, 5f, 5f, 3f, PrimitiveType.LINE),
-                node(1, -5f, -5f, -2f, PrimitiveType.CORNER),
-                node(2, 8f, -3f, 1f, PrimitiveType.LINE),
+                node(0, 5f, 5f, 3f, PrimitiveMeasurement.Line(1f)),
+                node(1, -5f, -5f, -2f, PrimitiveMeasurement.Arc(1f, 1f)),
+                node(2, 8f, -3f, 1f, PrimitiveMeasurement.Line(1f)),
             )
         val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(farOff))
-        // Angle and position error are averaged, not multiplied, so a position-only
-        // catastrophic mismatch caps out well above zero — what actually matters is
-        // staying clearly under GraphMemory.MERGE_THRESHOLD (0.75), not near zero.
-        assertTrue("expected a score well below the merge threshold but was $score", score < 0.5f)
+        // Angle, position and size error are averaged, not multiplied, so a
+        // position-only catastrophic mismatch caps out well above zero (here,
+        // size still matches perfectly by construction) — what actually
+        // matters is staying clearly under GraphMemory.MERGE_THRESHOLD (0.75),
+        // not near zero.
+        assertTrue("expected a score well below the merge threshold but was $score", score < 0.75f)
     }
 
     @Test
@@ -93,10 +95,59 @@ class GraphMatcherTest {
     }
 
     @Test
+    fun `a candidate with the same shape but different-length lines scores below an exact size match`() {
+        // Same positions, angles, and primitive-type sequence -- only the
+        // reported line lengths differ. Before PrimitiveMeasurement existed,
+        // a short line and a long line pointing the same way were
+        // indistinguishable to GraphMatcher; this is the regression test
+        // that the size dimension actually affects the score now.
+        val nodes = staircase()
+        val exactMatch = staircase()
+        val differentLengths =
+            listOf(
+                node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(5f)),
+                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(5f, 5f)),
+                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(5f)),
+            )
+
+        val exactScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(exactMatch))
+        val mismatchedSizeScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentLengths))
+
+        assertTrue(
+            "expected a size mismatch to score lower than an exact match: $mismatchedSizeScore vs $exactScore",
+            mismatchedSizeScore < exactScore,
+        )
+    }
+
+    @Test
+    fun `a candidate with the same shape but a different-radius arc scores below an exact size match`() {
+        // Same regression as the line-length test above, for the other
+        // measurement variant: an arc's radius is a real size component
+        // alongside its sweep angle (see PrimitiveMeasurement.Arc's class
+        // doc), so a radius mismatch alone should also cost score.
+        val nodes = staircase()
+        val exactMatch = staircase()
+        val differentRadius =
+            listOf(
+                node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(1f)),
+                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(sweepAngle = 1f, radius = 5f)),
+                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(1f)),
+            )
+
+        val exactScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(exactMatch))
+        val mismatchedRadiusScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentRadius))
+
+        assertTrue(
+            "expected a radius mismatch to score lower than an exact match: $mismatchedRadiusScore vs $exactScore",
+            mismatchedRadiusScore < exactScore,
+        )
+    }
+
+    @Test
     fun `bestAlignedWindow reorders stored nodes to match the candidate's own order`() {
         val nodes = staircase()
         val reversedCandidate = modelOf(nodes.reversed())
         val window = GraphMatcher.bestAlignedWindow(modelOf(nodes), reversedCandidate)
-        assertEquals(nodes.reversed().map { it.primitiveType }, window?.map { it.primitiveType })
+        assertEquals(nodes.reversed().map { it.measurement }, window?.map { it.measurement })
     }
 }

@@ -15,8 +15,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.eta.tbp.lib.lm.PrimitiveType
+import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 
 /** Small always-visible toggle for [LmStateOverlay] — a debug affordance, not part of the teach/recognize flow itself. */
 @Composable
@@ -42,7 +43,7 @@ fun LmStateToggleButton(
  */
 @Composable
 fun LmStateOverlay(
-    currentPrimitives: List<PrimitiveType>,
+    currentPrimitives: List<GraphNode>,
     learnedGraphs: Map<String, List<GraphObjectModel>>,
     modifier: Modifier = Modifier,
 ) {
@@ -63,7 +64,7 @@ fun LmStateOverlay(
             Spacer(Modifier.heightIn(min = 8.dp))
             Text("Primitives this episode (Tier 1)", style = MaterialTheme.typography.labelMedium)
             Text(
-                if (currentPrimitives.isEmpty()) "(none yet)" else currentPrimitives.joinToString(" → ") { it.name },
+                if (currentPrimitives.isEmpty()) "(none yet)" else currentPrimitives.joinToString(" → ") { describe(it) },
                 style = MaterialTheme.typography.bodySmall,
             )
 
@@ -78,7 +79,7 @@ fun LmStateOverlay(
                         style = MaterialTheme.typography.bodySmall,
                     )
                     variants.forEachIndexed { index, variant ->
-                        val sequence = variant.nodes.joinToString(" → ") { it.primitiveType.name }
+                        val sequence = variant.nodes.joinToString(" → ") { describe(it) }
                         Text(
                             "  #$index: $sequence (x${variant.exemplarCount})",
                             style = MaterialTheme.typography.bodySmall,
@@ -89,3 +90,10 @@ fun LmStateOverlay(
         }
     }
 }
+
+/** A primitive's type plus its measurement (length or sweep angle) — see [PrimitiveMeasurement]. */
+private fun describe(node: GraphNode): String =
+    when (val measurement = node.measurement) {
+        is PrimitiveMeasurement.Line -> "LINE(len=${"%.2f".format(measurement.length)})"
+        is PrimitiveMeasurement.Arc -> "ARC(∠=${"%.0f".format(Math.toDegrees(measurement.sweepAngle.toDouble()))}°)"
+    }

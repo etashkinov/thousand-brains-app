@@ -7,12 +7,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
 import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
-import com.eta.tbp.lib.lm.PrimitiveLM
-import com.eta.tbp.lib.lm.PrimitiveType
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
+import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.TouchSensorModule
 
 /**
@@ -31,9 +31,9 @@ import com.eta.tbp.lib.sensor.TouchSensorModule
 class RecognizerViewModel : ViewModel() {
     private val memory = GraphMemory()
     private val sensorModule = TouchSensorModule(sensorId = "touch-0")
-    private val tier1 = PrimitiveLM(lmId = "primitive-0")
+    private val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
     private val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
-    private val orchestrator = MontyOrchestrator(sensorModule, tier1, tier2)
+    private val orchestrator = MontyOrchestrator(sensorModule, primitiveSensor, tier2)
 
     /** Strokes drawn so far in the current character, for Compose rendering only. */
     var strokes by mutableStateOf<List<List<Offset>>>(emptyList())
@@ -52,7 +52,7 @@ class RecognizerViewModel : ViewModel() {
         private set
 
     /** Primitives Tier 1 has segmented so far this episode — [CharacterGraphLM.currentNodes], for the LM-state overlay. */
-    var currentPrimitives by mutableStateOf<List<PrimitiveType>>(emptyList())
+    var currentPrimitives by mutableStateOf<List<GraphNode>>(emptyList())
         private set
 
     /** Every learned graph, by label — [GraphMemory.snapshot], for the LM-state overlay. */
@@ -120,7 +120,7 @@ class RecognizerViewModel : ViewModel() {
 
     private fun refreshLmState() {
         evidence = tier2.evidenceSnapshot()
-        currentPrimitives = tier2.currentNodes().map { it.primitiveType }
+        currentPrimitives = tier2.currentNodes()
         learnedGraphs = memory.snapshot()
     }
 }

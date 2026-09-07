@@ -1,9 +1,9 @@
 package com.eta.tbp.lib.orchestrator
 
 import com.eta.tbp.lib.lm.CharacterGraphLM
-import com.eta.tbp.lib.lm.PrimitiveLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.TouchSensorModule
 import org.junit.Assert.assertEquals
@@ -16,9 +16,9 @@ import kotlin.math.sin
 class MontyOrchestratorTest {
     private fun newOrchestrator(memory: GraphMemory = GraphMemory()): MontyOrchestrator {
         val sensor = TouchSensorModule(sensorId = "touch-0")
-        val tier1 = PrimitiveLM(lmId = "primitive-0")
+        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
         val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
-        return MontyOrchestrator(sensor, tier1, tier2)
+        return MontyOrchestrator(sensor, primitiveSensor, tier2)
     }
 
     private fun teachCharacter(

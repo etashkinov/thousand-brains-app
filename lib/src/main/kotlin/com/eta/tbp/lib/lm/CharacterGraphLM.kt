@@ -7,15 +7,17 @@ import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.edgeChainOf
+import com.eta.tbp.lib.sensor.PrimitiveFeatures
 import kotlin.math.atan2
 
 /**
  * Tier 2: builds a character's graph from the primitive stream coming from
- * [PrimitiveLM] and matches it against every previously-taught
- * [GraphObjectModel] in [memory].
+ * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] and matches it against
+ * every previously-taught [GraphObjectModel] in [memory].
  *
- * "Episode" is one full character, same scoping as [PrimitiveLM] — uniform
- * across tiers, matching real Monty's own episode boundary (see
+ * "Episode" is one full character, same scoping as
+ * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] — uniform across every
+ * stage of the pipeline, matching real Monty's own episode boundary (see
  * IMPLEMENTATION_PLAN.md §3.6). A character may span several strokes:
  * [nodeBuffer] simply accumulates whatever primitives arrive between
  * [preEpisode] and [postEpisode], regardless of how many strokes that
@@ -170,16 +172,16 @@ class CharacterGraphLM(
         val poseVectors = requireNotNull(message.getPoseVectors()) { "Primitive messages must carry a pose" }
         val relativeAngle = atan2(poseVectors[0][1], poseVectors[0][0])
 
-        // PrimitiveLM's relativeAngle is a turn-from-previous encoding; summing it
-        // back up reconstructs the same absolute-angle sequence PrimitiveLM itself
-        // tracked internally (see PrimitiveLM.emitPrimitive).
+        // PrimitiveSensorModule's relativeAngle is a turn-from-previous encoding;
+        // summing it back up reconstructs the same absolute-angle sequence
+        // PrimitiveSensorModule itself tracked internally (see its emitPrimitive).
         runningAbsoluteAngle += relativeAngle
 
         return GraphNode(
             id = nodeBuffer.size,
             location = location.copyOf(),
             absoluteAngle = runningAbsoluteAngle,
-            primitiveType = features.type,
+            measurement = features.measurement,
         )
     }
 }

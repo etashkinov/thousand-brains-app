@@ -1,6 +1,6 @@
 package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.lm.PrimitiveType
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 
 /**
  * One primitive, as stored in a character's graph. [absoluteAngle] is the
@@ -9,13 +9,18 @@ import com.eta.tbp.lib.lm.PrimitiveType
  * [com.eta.tbp.lib.lm.PrimitiveLM] emits) — [GraphMatcher] re-baselines it
  * per alignment attempt, which only works if the starting reference is
  * consistent across every node, not anchored to whichever primitive
- * happened to be first when this was taught.
+ * happened to be first when this was taught. [measurement] carries both the
+ * primitive's type (`Line`/`Arc`, as the runtime variant) and its size/shape
+ * (a line's length, an arc's sweep angle and radius) in one field — there's
+ * no separate type enum alongside it (see [PrimitiveMeasurement]'s class
+ * doc for why that used to be two parallel, only-conventionally-synced
+ * discriminants for the same fact).
  */
 data class GraphNode(
     val id: Int,
     val location: FloatArray,
     val absoluteAngle: Float,
-    val primitiveType: PrimitiveType,
+    val measurement: PrimitiveMeasurement,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -25,7 +30,7 @@ data class GraphNode(
 
         if (id != other.id) return false
         if (absoluteAngle != other.absoluteAngle) return false
-        if (primitiveType != other.primitiveType) return false
+        if (measurement != other.measurement) return false
         if (!location.contentEquals(other.location)) return false
 
         return true
@@ -34,7 +39,7 @@ data class GraphNode(
     override fun hashCode(): Int {
         var result = id
         result = 31 * result + absoluteAngle.hashCode()
-        result = 31 * result + primitiveType.hashCode()
+        result = 31 * result + measurement.hashCode()
         result = 31 * result + location.contentHashCode()
         return result
     }

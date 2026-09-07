@@ -1,8 +1,9 @@
 # Implementation Plan — TBP-Inspired Handwriting Recognition App
 
-**Platform:** Android (Kotlin) · **Status:** Phases 0–3 done (`lib`'s brain
-pipeline — sensor, primitives, character graph memory — is built and
-unit-tested end to end); Phase 4 (UI wiring) is next.
+**Platform:** Android (Kotlin) · **Status:** Phases 0–4 done (`lib`'s brain
+pipeline — sensor, primitives, character graph memory, orchestrator — and
+`app`'s teach/recognize UI loop are built and tested end to end); Phase 5
+(merge/spawn and primitive-fit tuning against real handwriting) is next.
 **Core idea:** A two-tier, Thousand-Brains-Project-inspired recognizer that learns
 handwritten characters live from touchscreen strokes, with no pretraining —
 architecture ported as faithfully as possible from Monty's actual CMP message
@@ -16,7 +17,7 @@ format and `LearningModule`/`SensorModule` interfaces.
 |---|---|---|
 | Input modality | Live touchscreen (`MotionEvent`) | Gives ground-truth stroke trajectory, order, and direction — no reconstruction needed |
 | Training data | None pre-loaded | User teaches by drawing + labeling; system starts empty |
-| Architecture | 2-tier `LearningModule` hierarchy, Monty-faithful interfaces | Tier 1: primitives (line/arc/corner). Tier 2: character graphs |
+| Architecture | 2-tier `LearningModule` hierarchy, Monty-faithful interfaces | Tier 1: primitives (line/arc). Tier 2: character graphs |
 | Messaging | Ported `CmpMessage`/`CmpGoal`, matching Monty's CMP `Message`/`Goal` fields | Same schema at every tier — the "repeating computational unit" principle, and sets up Phase 8 for free |
 | Representation | `GraphObjectModel`/`GraphMemory`, pose relative to object's own frame | Matches TBP's reference-frame principle; supports scale/position tolerance |
 | Rotation policy | Small tolerance band only (±10–15°), no full rotation search | Characters are orientation-*defining* (b/d/p/q, 6/9) — unlike 3D objects, rotation is identity, not nuisance |
@@ -44,14 +45,16 @@ format and `LearningModule`/`SensorModule` interfaces.
 └───────────────┬────────────────────────────────────────────────┘
                 │
 ┌───────────────▼────────────────────────────────────────────────┐
-│ Tier-1: PrimitiveLM : LearningModule<Unit>                     │
-│  matchingStep() → segments into line/arc/corner runs           │
-│  getOutput() → CmpMessage? (looks like SM output to Tier-2;    │
-│                null when there's nothing new — no placeholder) │
+│ PrimitiveSensorModule : SensorModule<CmpMessage>               │
+│  step(msg) → CmpMessage — segments into line/arc runs (whole-  │
+│                window geometric fit — see §3.4, no separate    │
+│                corner type: a bend is just two adjacent runs); │
+│                a SensorModule, not a LearningModule — see      │
+│                §3.4's "Known asymmetry" note for why            │
 └───────────────┬────────────────────────────────────────────────┘
                 │
 ┌───────────────▼────────────────────────────────────────────────┐
-│ Tier-2: CharacterGraphLM : LearningModule<...>                 │
+│ Tier-1 (the only LM tier): CharacterGraphLM : LearningModule<...> │
 │  matchingStep() → live evidence accumulation vs. GraphMemory   │
 │  getOutput() → CmpMessage? (single best label + confidence —   │
 │                a point estimate, same shape an SM would emit)  │
@@ -85,7 +88,7 @@ guarantee:
 
 | Module | Gradle plugin | Contains | May depend on Android SDK? |
 |---|---|---|---|
-| **`lib`** | `kotlin("jvm")` — a plain Kotlin/JVM module, **not** `com.android.library` | Every "brain" class: `CmpMessage`/`CmpGoal`, the `SensorModule`/`LearningModule` interfaces, `PrimitiveLM`, `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher` (the orchestrator wiring them together is still Phase 4's job) | **No.** The Android SDK is not even on `lib`'s compile classpath, so an accidental `import android.*` is a compile error, not a lint warning. |
+| **`lib`** | `kotlin("jvm")` — a plain Kotlin/JVM module, **not** `com.android.library` | Every "brain" class: `CmpMessage`/`CmpGoal`, the `SensorModule`/`LearningModule` interfaces, `PrimitiveSensorModule`, `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher`, `MontyOrchestrator` | **No.** The Android SDK is not even on `lib`'s compile classpath, so an accidental `import android.*` is a compile error, not a lint warning. |
 | **`app`** | `com.android.application`, depends on `lib` | Jetpack Compose UI, `MotionEvent` capture, on-device persistence (file/DataStore), and all wiring that constructs `lib`'s orchestrator and feeds it converted observations | Yes — this is where all device-specific I/O lives |
 
 Think of `lib` as the organism's brain and `app` as everything else the
@@ -179,8 +182,9 @@ Python `dict[str, Any]`, read via string keys (`get_feature_by_name`).
 Kotlin can do better without giving up message uniformity: each producer
 declares its own tiny marker interface for its own payload shape —
 `StrokeFeatures` (`curvature`/`strokeIndex`/`orderInStroke`, from
-`TouchSensorModule`), `PrimitiveFeatures` (`type`/`startIndex`/`endIndex`/
-`strokeIndex`, from `PrimitiveLM`) — and a consumer does one typed
+`TouchSensorModule`), `PrimitiveFeatures` (`measurement`/`startIndex`/
+`endIndex`/`strokeIndex`, from `PrimitiveSensorModule` — `measurement`'s own
+Line/Arc variant doubles as the primitive's type, no separate enum) — and a consumer does one typed
 `is`/`as` check on the whole payload instead of many stringly-typed,
 unsafely-cast map lookups. `CmpMessage` itself stays **non-generic**
 deliberately: genericizing it over the payload type (an earlier detour this
@@ -262,35 +266,80 @@ two counts:
   else.
 
 `state()`/`loadState()` also generalized from `Map<String, Any>` to a
-generic `State` type param — each LM's state shape is its own business
-(`PrimitiveLM`'s is `Unit`, stateless; `CharacterGraphLM`'s is
-`Map<String, List<GraphObjectModel>>`, its actual learned memory).
+generic `State` type param — each LM's state shape is its own business.
+`CharacterGraphLM`'s is `Map<String, List<GraphObjectModel>>`, its actual
+learned memory. It's currently the only `LearningModule` in this app's
+hierarchy (see §3.4's "Known asymmetry" note) — `PrimitiveSensorModule` is
+a `SensorModule`, which has no `state()`/`loadState()` contract at all,
+matching Monty's own SMs not needing to persist learned state either.
 
 ### 3.4 Tier implementations
 
 ```kotlin
-class PrimitiveLM(override val lmId: String) : LearningModule<Unit> {
-    // Online state machine (matches the orchestrator's per-point step loop —
-    // matchingStep/getOutput called once per point, not once per stroke): a
-    // run of points buffers until one breaks its line/arc/corner hypothesis,
-    // at which point it's queued and drained by the next getOutput() call(s).
-    // A run ending and a corner starting can both complete on the same point,
-    // so finished runs are queued rather than held in one slot. A pen lift
-    // between strokes of the same character is *not* a separate episode
-    // (see §3.6) — it's a strokeIndex discontinuity inside this same
-    // message stream, and matchingStep force-breaks the open run when it
+class PrimitiveSensorModule(override val sensorId: String) : SensorModule<CmpMessage> {
+    // A SensorModule, not a LearningModule -- see this section's "Known
+    // asymmetry" note for why that's the Monty-faithful choice, not a
+    // shortcut. That also means no receiveVotes/sendOutVote/state/
+    // loadState/setExperimentMode: none of those exist on SensorModule,
+    // because Monty's own SMs don't vote, don't persist learned state, and
+    // don't have training-vs-eval behavior either -- this class never used
+    // any of them for real (they were permanent no-ops under the old
+    // LearningModule framing).
+    //
+    // step() buffers a candidate run of points as long as they, taken AS A
+    // WHOLE, still fit within WIDTH_TOLERANCE of one of two idealized
+    // shapes -- one shared tolerance, not two differently-scaled criteria:
+    //   - line: every point within WIDTH_TOLERANCE of the best-fit line
+    //     through them (PCA major axis) -- "fits inside a thin rectangle"
+    //   - arc: every point within WIDTH_TOLERANCE of a best-fit circle's
+    //     circumference (least-squares algebraic fit) -- "fits inside a
+    //     thin donut"
+    // A short window (few points) can trivially find some large-radius
+    // circle passing within tolerance of a moderate corner's two legs, so
+    // one additional per-point veto (MAX_LOCAL_TURN) still discards a point
+    // whose own curvature is a sharp kink outright, calibrated well above a
+    // tight loop's own curvature so it doesn't reintroduce the bug that
+    // motivated this distance-based design -- see PrimitiveSensorModule.kt's
+    // class doc for why this replaced an earlier aspect-ratio/curvature-
+    // consistency design (and the dead-zone/threshold bugs that drove that
+    // rewrite, in §7).
+    //
+    // There is no third CORNER type. A sharp bend is just the boundary
+    // between two LINE/ARC runs — the angle between two adjacent nodes'
+    // own recorded poses already carries how sharp it was, so a dedicated
+    // corner node added no information a LINE-LINE pair didn't already
+    // have, while making a hand-drawn corner's graph depend on whether it
+    // was drawn as one stroke or split across two (see
+    // PrimitiveSensorModule.kt's class doc for the full reasoning).
+    //
+    // A pen lift between strokes of the same character is *not* a separate
+    // episode (see §3.6) — it's a strokeIndex discontinuity inside this
+    // same message stream, and step() force-breaks the open run when it
     // sees one, the same way Monty signals sensor discontinuities
     // (on/off-object) as a per-message flag (`use_state`) rather than a
-    // distinct lifecycle scope per tier.
-    override fun matchingStep(messages: List<CmpMessage>) { /* decode + segment; a strokeIndex change force-breaks the open run, see PrimitiveLM.kt */ }
-    override fun receiveVotes(votes: List<Any>) { /* no-op in v1 */ }
-    override fun sendOutVote(): Any? = null // no siblings to vote with in v1
-    override fun getOutput(): CmpMessage? = TODO("drain the queued finished-run messages")
+    // distinct lifecycle scope.
+    //
+    // The finished run is measured, not just classified: a line's chord
+    // length (first point to last), or an arc's signed accumulated sweep
+    // angle plus radius, both read off the same circle fit already used to
+    // decide it was an arc -- see §7's entries on PrimitiveMeasurement for
+    // why this exists (a bare type tag carried no size information at all)
+    // and why sweep angle is a running sum of per-step deltas rather than
+    // one first-to-last subtraction (correctness for a near-full-loop run).
+    // PrimitiveMeasurement's own Line/Arc variants double as the primitive's
+    // type now -- there's no separate enum (see §7).
+    //
+    // step() must return exactly one CmpMessage per call (SensorModule's
+    // contract), but a line/arc run can span many observations before it's
+    // complete -- most steps return passMessage = false ("nothing new"),
+    // and one run may still be open when the episode ends. postEpisode()
+    // can't return a value to carry that trailing primitive through the
+    // normal path, so drainTrailingPrimitive() is this class's one
+    // deliberate, documented addition beyond the plain interface.
+    override fun step(observation: CmpMessage): CmpMessage { TODO("decode + fit-test; a strokeIndex change force-breaks the open run") }
     override fun preEpisode() { /* reset run-tracking state for the new character */ }
-    override fun postEpisode() { /* flush whatever run is still open at the end of the character */ }
-    override fun setExperimentMode(mode: ExperimentMode) {}
-    override fun state() = Unit // stateless across episodes
-    override fun loadState(state: Unit) {}
+    override fun postEpisode() { /* flush whatever run is still open, for drainTrailingPrimitive() to retrieve */ }
+    fun drainTrailingPrimitive(): CmpMessage? = TODO("consume-once trailing primitive from postEpisode()")
 }
 
 class CharacterGraphLM(
@@ -364,29 +413,48 @@ plain method a caller queries directly, the same way Monty's own
 logging/experiment harness reads an LM's internal hypothesis state directly
 rather than through a `Message`.
 
-**Known asymmetry, not yet fixed:** only `CharacterGraphLM` has real
-learned memory (`GraphMemory`, evidence accumulation, merge/spawn).
-`PrimitiveLM` classifies with fixed geometric thresholds
-(`CORNER_CURVATURE_THRESHOLD`, `LINE_ANGLE_TOLERANCE`, etc.), not a learned
-graph model of its own — it satisfies the `LearningModule` *interface* but
-isn't really a *learning* module yet. In real Monty, every LM at every
-tier builds and matches against its own learned graph memory; this port
-simplifies Tier 1 because primitives (line/arc/corner) are a small,
-closed, geometrically-definable vocabulary, unlike open-ended taught
-characters — there's nothing a fixed rule can't already capture. Revisit
-if primitive-level ambiguity (a segment that's genuinely borderline
-line/arc) turns out to matter once real handwriting is tested against it
-(Phase 5).
+**Known asymmetry — resolved by matching Monty's actual layering, not by
+"fixing" Tier 1 to learn.** Only `CharacterGraphLM` has real learned memory
+(`GraphMemory`, evidence accumulation, merge/spawn); `PrimitiveSensorModule`
+classifies with fixed geometric fit tests (distance from a best-fit line
+or circle, within one shared tolerance — see §3.4's sketch and
+`PrimitiveSensorModule.kt`'s class doc). This asymmetry was originally
+logged here as a simplification "not yet fixed," implying the primitive
+tier owed the system a taught graph memory the way `CharacterGraphLM` has
+one. Checking real Monty's own source (`sensor_modules.py`) said otherwise:
+Monty's own `SensorModule` computes curvature via a fixed, deterministic
+least-squares surface fit — not a learned model either — and a single-SM/
+single-LM hierarchy (exactly this app's shape, with `CharacterGraphLM` as
+the *only* `LearningModule`) is Monty's own ordinary baseline
+configuration, not a stripped-down special case. So the primitive tier's
+job (turn a raw point stream into typed local features with pose) is
+architecturally SM-shaped work, not LM-shaped work that got shortcut —
+this was first just *documented* (`PrimitiveLM` still implemented
+`LearningModule<Unit>`, with `receiveVotes`/`sendOutVote`/`state`/
+`loadState`/`setExperimentMode` all permanent no-ops), then actually acted
+on: `PrimitiveLM` was rewritten as `PrimitiveSensorModule`, a real
+`SensorModule<CmpMessage>` chained after `TouchSensorModule`, shedding
+every one of those vestigial methods because `SensorModule` doesn't have
+them. Primitives (line/arc) stay a small, closed, geometrically-definable
+vocabulary, unlike open-ended taught characters — nothing to fix here per
+se. Revisit only if primitive-level ambiguity (a segment that's genuinely
+borderline line/arc, or a tight arc's curvature reading close to the
+sharp-kink veto — see §7) turns out to matter once real handwriting is
+tested against it (Phase 5) — and see §7 for the deeper "should boundary
+detection itself be a learned, evidence-based process" question this was
+weighed against, which real Monty hasn't made robust either.
 
 ### 3.5 Graph memory — mirrors `GraphObjectModel` / `GraphMemory`
 
 ```kotlin
 data class GraphNode(
     val id: Int,
-    val location: FloatArray,        // relative to the character's own centroid
-    val absoluteAngle: Float,        // tangent angle in the character's own drawing-order frame
-    val primitiveType: PrimitiveType // typed, not a nonMorphologicalFeatures-style map — see §3.1's note
+    val location: FloatArray,              // relative to the character's own centroid
+    val absoluteAngle: Float,              // tangent angle in the character's own drawing-order frame
+    val measurement: PrimitiveMeasurement  // type (as the Line/Arc variant) + size — see §3.1's note; no separate type enum
 )
+
+// sealed interface PrimitiveMeasurement { data class Line(length); data class Arc(sweepAngle, radius) } — see §3.4's PrimitiveSensorModule and §7
 
 data class GraphEdge(
     val fromNode: Int,
@@ -465,13 +533,21 @@ re-baselining it lands on the same relative-angle sequence a genuine
 reverse retrace would reconstruct, with no separate sign-flip logic needed
 for the turn direction.
 
+The per-node score is now a three-way average — angle, position, and
+`measurement` — not two: a line's `length` or an arc's `sweepAngle` is
+scored to 0..1 against `MAX_LENGTH_ERROR`/a full turn *independently per
+node* before averaging across the window, since the two variants live on
+different scales and can't share one error normalization (see §7's own
+entry on this). Without this term, a short line and a long line pointing
+the same direction were literally indistinguishable to `GraphMatcher` —
+only orientation and position carried any signal.
+
 ### 3.6 Orchestrator — mirrors `MontyBase`'s step loop
 
-**Not built yet** — Phases 0–3 validated the pipeline by driving each tier
-directly from unit tests (see `CharacterGraphLMTest`'s `drive()` helper,
-which is essentially this loop already, minus a real class around it).
-Building `MontyOrchestrator` for real is Phase 4's job, wiring `app`'s touch
-input to it.
+Built in Phase 4, wiring `app`'s touch input to the pipeline Phases 0–3
+validated by driving each tier directly from unit tests (see
+`CharacterGraphLMTest`'s `drive()` helper, which is essentially this loop
+already, minus a real class around it).
 
 **Episode boundary is uniform across every tier — not per-LM-type.** Real
 Monty's `MontyExperiment.run_episode()` calls `MontyBase.reset()` exactly
@@ -482,10 +558,11 @@ experiment/environment owns that boundary, not the LM. Since one Monty
 episode is one full object presentation (potentially many sensor movement
 steps before `is_done`), this app's matching unit is one full
 **character** — potentially several strokes — not one stroke. So
-`preEpisode()`/`postEpisode()` on both `PrimitiveLM` and `CharacterGraphLM`
-bound one character, together, always. (An earlier draft of this section
-briefly proposed a stroke-scoped episode for `PrimitiveLM` and a
-character-scoped one for `CharacterGraphLM` — worth recording as a mistake
+`preEpisode()`/`postEpisode()` on both `PrimitiveSensorModule` and
+`CharacterGraphLM` bound one character, together, always. (An earlier
+draft of this section briefly proposed a stroke-scoped episode for the
+primitive tier and a character-scoped one for `CharacterGraphLM` — worth
+recording as a mistake
 caught by checking Monty's actual source rather than reasoning about it
 from the class names alone, same category of correction as §3.3's
 `getOutput`/`sendOutVote` split.)
@@ -496,9 +573,8 @@ message stream, the same way Monty itself signals a sensor discontinuity
 (leaving an object, `on_object` going false) via a per-observation flag
 (`use_state`, `sensor_modules.py`) rather than a separate lifecycle scope.
 Here, `StrokeFeatures.strokeIndex` already carries exactly this:
-`PrimitiveLM.step()` force-breaks its open run whenever `strokeIndex`
-changes — the same code path as hitting a corner — with no new message
-field needed.
+`PrimitiveSensorModule.step()` force-breaks its open run whenever
+`strokeIndex` changes, with no new message field needed.
 
 **A second, independent issue surfaced while implementing this: per-stroke
 normalization silently destroys cross-stroke position information.**
@@ -528,7 +604,7 @@ logic needed on the `app` side.
 ```kotlin
 class MontyOrchestrator(
     private val sensorModule: SensorModule<RawTouchObservation>,
-    private val tier1: PrimitiveLM,
+    private val primitiveSensor: PrimitiveSensorModule,
     private val tier2: CharacterGraphLM,
 ) {
     private val strokePoints = mutableListOf<List<RawPoint>>()
@@ -567,30 +643,27 @@ class MontyOrchestrator(
     fun teach(label: String) = tier2.teach(label)
 
     /**
-     * Recomputes the whole character from scratch. tier1.preEpisode()/
-     * postEpisode() fire on every replay — harmless, since PrimitiveLM is
-     * fully stateless across calls — so evidence stays live as strokes are
-     * added or removed. tier2.postEpisode() deliberately does NOT fire
-     * here: its only consequential effect (snapshotting for teach()) is
-     * reserved for the true end of the character, in endCharacter().
+     * Recomputes the whole character from scratch. primitiveSensor's
+     * preEpisode()/postEpisode() fire on every replay — harmless, since
+     * it's fully stateless across calls — so evidence stays live as
+     * strokes are added or removed. tier2.postEpisode() deliberately does
+     * NOT fire here: its only consequential effect (snapshotting for
+     * teach()) is reserved for the true end of the character, in
+     * endCharacter().
      */
     private fun replay() {
-        tier1.preEpisode()
+        primitiveSensor.preEpisode()
         tier2.preEpisode()
         for (observations in buildNormalizedObservations()) {
             for (observation in observations) {
-                tier1.matchingStep(listOf(sensorModule.step(observation)))
-                drainTier1IntoTier2()
+                val touchMessage = sensorModule.step(observation)
+                val primitiveMessage = primitiveSensor.step(touchMessage)
+                tier2.matchingStep(listOf(primitiveMessage))
+                tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
             }
         }
-        tier1.postEpisode()
-        drainTier1IntoTier2()
-    }
-
-    private fun drainTier1IntoTier2() {
-        val outputs = generateSequence { tier1.getOutput() }.toList()
-        if (outputs.isNotEmpty()) tier2.matchingStep(outputs)
-        tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
+        primitiveSensor.postEpisode()
+        primitiveSensor.drainTrailingPrimitive()?.let { tier2.matchingStep(listOf(it)) }
     }
 
     /** Resamples each stroke independently, but normalizes them together — see the note above. */
@@ -636,9 +709,9 @@ a dot plus a long stroke) turn out to matter.
 | `state_dict()`/load for persistence | `state()`/`loadState()`, generic per LM — JSON deferred to Phase 7 | **Faithful contract**, simple backing store |
 | `GraphObjectModel` / `GraphMemory` | Same names, 2D fields | **Faithful** |
 | `detect_new_object_k_steps` merge/spawn logic | `detectNewObject()` | **Faithful concept**, simplified scoring function |
-| Every LM at every tier builds/matches its own learned graph memory | Only `CharacterGraphLM` (Tier 2) has one; `PrimitiveLM` (Tier 1) uses fixed geometric thresholds | **Simplified** — primitives are a small, closed, geometrically-definable vocabulary, unlike open-ended taught characters (see §3.4's note) |
+| SM does fixed feature extraction (e.g. curvature via least-squares fit); LM builds/matches learned graph memory | `TouchSensorModule`→`PrimitiveSensorModule` chained as two `SensorModule`s doing fixed feature extraction/segmentation (line/arc fit tests); `CharacterGraphLM` is the only `LearningModule` | **Faithful** — a single-SM-chain/single-LM hierarchy is Monty's own ordinary baseline configuration (see §3.4's "Known asymmetry" note) |
 | Motor system + simulator driving a sensor | None — touch input replaces the motor system | **Not ported** — the human *is* the motor system |
-| Multiple LMs voting via lateral CMP | Single LM per tier in v1; multiple `PrimitiveLM`s voting in Phase 8 | **Deferred**, same interface supports it |
+| Multiple LMs voting via lateral CMP | Single LM in v1; multiple `CharacterGraphLM`s voting in Phase 8 | **Deferred**, same interface supports it |
 | Goal-State Generators / `CmpGoal` | Present as a class shape, unused until Phase 8 | **Stubbed** |
 | Episode = one object presentation, uniform across every SM/LM (`MontyBase.reset()`) | Episode = one character (possibly multi-stroke), uniform across both tiers; stroke boundaries are a `strokeIndex` discontinuity in the message stream, not a separate lifecycle scope (§3.6) | **Faithful** |
 | `get_possible_matches()` / `_threshold_possible_matches()` deciding no-match/converged/multi-hypothesis | `CharacterGraphLM.possibleMatches()` / `recognitionResult()` | **Faithful concept**, simplified scoring (straight percent-of-max, no mean/std branching) |
@@ -703,9 +776,9 @@ it. The core design point (§3.6): one episode is one full **character**,
 uniform across both tiers — matching Monty's own `MontyBase.reset()`, which
 applies identically to every SM/LM regardless of hierarchy position.
 Strokes are steps *within* that episode, not episodes of their own; a pen
-lift is a `strokeIndex` discontinuity `PrimitiveLM` reacts to directly,
-mirroring how Monty signals sensor discontinuities (`use_state`) as message
-data rather than a separate lifecycle call.
+lift is a `strokeIndex` discontinuity the primitive tier reacts to
+directly, mirroring how Monty signals sensor discontinuities (`use_state`)
+as message data rather than a separate lifecycle call.
 
 **`lib` additions:**
 - `MontyOrchestrator` (§3.6): `beginCharacter()` / `stepStroke(points)` /
@@ -714,10 +787,12 @@ data rather than a separate lifecycle call.
   character (not per stroke — see §3.6's note on why), replaying the whole
   pipeline from scratch on every change; this also means `undoLastStroke()`/
   `clearCharacter()` live here, not as `app`-side replay logic.
-- `PrimitiveLM.step()`: detect a `strokeIndex` change against the buffered
-  run and force a break (same code path as a corner ending a line), so a
-  run never silently spans a pen lift. Update its `preEpisode`/
-  `postEpisode` doc comments — they now bound one character, not one stroke.
+- The primitive tier's `step()`: detect a `strokeIndex` change against the
+  buffered run and force a break, so a run never silently spans a pen
+  lift. Update its `preEpisode`/`postEpisode` doc comments — they now
+  bound one character, not one stroke. (This tier was later rewritten as
+  `PrimitiveSensorModule`, a real `SensorModule` — see §3.4/§7 — but the
+  `strokeIndex`-discontinuity behavior itself is unchanged.)
 - `CharacterGraphLM.possibleMatches(xPercentThreshold: Float = 10f): List<String>`
   — port of Monty's `get_possible_matches()`/`_threshold_possible_matches()`
   (`evidence_matching/learning_module.py`), simplified to straight
@@ -728,7 +803,7 @@ data rather than a separate lifecycle call.
   / `Ambiguous(labels, evidence)`), built from `possibleMatches()` +
   `evidenceSnapshot()` via `CharacterGraphLM.recognitionResult()`, and
   returned by `MontyOrchestrator.endCharacter()`.
-- Tests: a `PrimitiveLMTest` case for a stroke gap not bleeding into a run;
+- Tests: a case for a stroke gap not bleeding into a run;
   `possibleMatches`/`recognitionResult` unit cases (empty memory → Unknown,
   one dominant label → Recognized, a deliberately close pair → Ambiguous);
   a new `MontyOrchestratorTest` driving a multi-stroke synthetic shape
@@ -794,13 +869,21 @@ data. Basic onboarding for the teach/recognize loop.
 Only after v1 is solid.
 1. Import photo → threshold + skeletonize (OpenCV) → build skeleton adjacency
    graph (endpoints = degree 1, junctions = degree ≥3).
-2. Run one simulated "glide" `PrimitiveLM` instance per connected
-   component/branch, advancing by straightest-continuation at junctions.
+2. Run one simulated "glide" instance per connected component/branch,
+   advancing by straightest-continuation at junctions.
 3. **Voting for disambiguation:** at an ambiguous junction, use relative-
-   position consistency across simultaneously-running glide LMs, plus
+   position consistency across simultaneously-running glide instances, plus
    top-down bias from `CharacterGraphLM`'s current leading hypothesis
    (populate `CmpGoal` + `receiveVotes` here — this is exactly what those
-   stubs were for), instead of a purely local straightness heuristic.
+   stubs were for), instead of a purely local straightness heuristic. Since
+   the primitive tier is now `PrimitiveSensorModule` (a `SensorModule`, not
+   a `LearningModule`) rather than the original `PrimitiveLM`, and
+   `receiveVotes`/`sendOutVote` only exist on `LearningModule`, this
+   voting step would need to live at the `CharacterGraphLM` level (voting
+   between sibling `CharacterGraphLM` instances over which glide's
+   primitive sequence to trust) rather than between primitive-tier
+   instances directly — worth resolving concretely when Phase 8 is
+   actually picked up, not speculatively now.
 4. Feed resulting primitive sequences into the **same** `CharacterGraphLM` —
    only works cleanly because `matchScore` is already order/direction-tolerant.
 
@@ -818,22 +901,34 @@ lives in `lib` and runs as plain JUnit on the JVM; `app`'s test surface is
 deliberately small.
 
 - **`lib` unit tests (`:lib:test`, plain JUnit, JVM only — no emulator, no
-  Robolectric) — 38 tests as of Phase 3, across:**
+  Robolectric) — 63 tests as of the `PrimitiveMeasurement` radius/merge
+  follow-up, across:**
   - `StrokePreprocessorTest` — resampling, normalization, tangent/curvature,
-    the fast/slow + small/large invariance exit criterion.
+    the fast/slow + small/large invariance exit criterion, plus `smooth()`.
   - `TouchSensorModuleTest`, `CmpMessageTest` — message construction/accessors.
-  - `PrimitiveLMTest` — the three synthetic-shape segmentation cases plus
-    interface sanity (state, experiment mode, voting no-ops).
-  - `GraphMatcherTest` — order/direction tolerance, mismatched-type/count
-    rejection, partial-match prefix tracking, on hand-built synthetic graphs.
+  - `PrimitiveSensorModuleTest` — line/arc segmentation across synthetic
+    shapes and realistic jitter, the corner-angle sweep (no dedicated
+    corner type — see §3.4/§7), the one-stroke-vs-two-strokes regression
+    test for why that type was dropped, and `PrimitiveMeasurement` cases
+    (a line's chord length, a semicircle's/tight loop's sweep angle, that a
+    longer leg reports a larger length than a shorter one, and that a
+    shallow arc reports a larger circle radius than a semicircle sliced
+    from the same normalized size).
+  - `GraphMatcherTest` — order/direction tolerance, mismatched-kind/count
+    rejection, partial-match prefix tracking, and that a `measurement`
+    mismatch alone (same positions/angles, different line length or arc
+    radius) scores below an exact match — on hand-built synthetic graphs.
   - `GraphMemoryTest` — merge-vs-spawn, snapshot/restore round-trips.
   - `CharacterGraphLMTest` — the actual Phase 3 exit criterion end to end
-    through the full Phase 1→2→3 pipeline, plus a `getOutput()`/
-    `evidenceSnapshot()` coherence check.
-  - `MontyOrchestrator` step-loop behavior driven by synthetic multi-stroke
-    `RawPoint` sequences, including a pen lift mid-character, once it's
-    built (Phase 4) — no real touchscreen or device needed.
-  - `state()`/`loadState()` round-trips on plain Kotlin data.
+    through the full pipeline, `possibleMatches()`/`recognitionResult()`
+    cases, plus a `getOutput()`/`evidenceSnapshot()` coherence check.
+  - `MontyOrchestratorTest` — step-loop behavior driven by synthetic
+    multi-stroke `RawPoint` sequences, including a pen lift mid-character,
+    undo/clear, and cross-stroke position discrimination — no real
+    touchscreen or device needed.
+  - `state()`/`loadState()` round-trips on plain Kotlin data — only
+    `CharacterGraphLM` has this contract now; `PrimitiveSensorModule` is a
+    `SensorModule` and doesn't persist state at all (see §3.4).
   - Because none of this touches Android, these tests are fast enough to run
     on every save and in CI without a device/emulator.
 - **`app` tests (thin adapters + UI only):**
@@ -903,6 +998,117 @@ deliberately small.
   curvature across interior angles from 90° to 170° (see
   `PrimitiveLMTest`'s corner-angle sweep) — comfortably above measured
   arc-range curvature (~8°) while catching corners down to ~150° interior.
+
+  A fourth pass replaced the whole approach rather than tuning it further,
+  triggered by a correctness bug the threshold recalibration couldn't fix:
+  a corner drawn as one continuous stroke produced `LINE-CORNER-LINE` (3
+  nodes), but the *identical* shape drawn as two strokes meeting at the
+  same vertex produced `LINE-LINE` (2 nodes) — since a pen lift just
+  force-breaks the open run without ever deciding whether a corner belongs
+  there. `GraphMatcher.matchScore()` requires equal node counts, so these
+  could never match each other, no matter how good the scoring math was.
+  The fix considered and rejected first: synthesize a corner at stroke
+  boundaries too, when the two strokes' endpoints are close enough to
+  count as meeting. Rejected because it's fundamentally order/direction-
+  dependent — strokes can be drawn in any order, from either end, with
+  unrelated strokes interleaved between them, and an online per-point
+  segmenter can't retroactively determine which stroke's endpoint connects
+  to which other stroke's without a completely different (all-pairs,
+  whole-character) analysis. The actual fix: **drop `CORNER` as a
+  primitive type entirely.** The angle between two adjacent `LINE`/`ARC`
+  nodes' own recorded poses already carries exactly how sharp a bend was
+  — `GraphMatcher` already re-baselines and compares consecutive nodes'
+  angles directly — so a dedicated corner node was never adding
+  information a `LINE`-`LINE` pair didn't already have; it was just
+  representing the same bend differently depending on drawing mechanics.
+  With no corner type, a same-stroke bend and a cross-stroke bend (any
+  order, any direction) produce the *same* sequence, because nothing is
+  left that only fires for one of them. This also replaced the
+  segmentation test itself, since simply removing `CORNER` from a per-point
+  incremental threshold state machine wasn't enough on its own: `PrimitiveLM`
+  now grows a candidate run only while its points, taken as a **whole**,
+  fit a line (aspect ratio of the point cloud's principal-axis spreads —
+  a PCA/total-least-squares collinearity test) or an arc (curvature's mean
+  is non-trivial, its standard deviation small relative to that mean),
+  with one shared per-point veto (a single sharp kink is discarded outright,
+  joining neither run, rather than anchoring a degenerate one-point run of
+  its own). This eliminates the per-point running-average machinery
+  (`LINE_TREND_WINDOW`, `CORNER_CURVATURE_THRESHOLD`) that drove the three
+  passes above — see `PrimitiveLM.kt`'s class doc for the full design and
+  `PrimitiveSensorModuleTest`'s one-stroke-vs-two-strokes test for the
+  regression check.
+
+  **Known open gap from this pass (resolved by the sixth pass below):** a
+  tight, small full loop (e.g. a complete circle drawn as one stroke,
+  roughly what an "O" needs) can measure per-point curvature close to the
+  same sharp-kink veto that's needed to catch a ~150°-interior corner — at
+  `DEFAULT_RESAMPLE_COUNT`, a full 360° loop's curvature (~15°) and a
+  fairly gentle corner's (~15-20° at 150-155° interior) are numerically
+  close, so there's little room to set one veto that cleanly separates
+  "genuinely sharp bend" from "tight but smooth loop." A quick check found
+  a full circle at default settings under-segmented into a couple of
+  `LINE`s rather than one clean `ARC`.
+
+  A fifth pass acted on a question raised (not by tuning, but by
+  re-examining the architecture) after the fourth pass: if a hand-drawn
+  corner's sharpness is already fully recoverable from two adjacent
+  `LINE`/`ARC` nodes' own recorded angles, and this tier's whole job is
+  fixed geometric fitting rather than anything actually *learned* — is
+  packaging it as a `LearningModule` still the right call? Checking real
+  Monty's `SensorModule` (`sensor_modules.py`) confirmed it computes
+  curvature via the same kind of fixed, deterministic math (a least-
+  squares surface fit), not a learned model — so this tier's fixed-fit
+  design was never the odd one out; it was mis-labeled. `PrimitiveLM` was
+  rewritten as `PrimitiveSensorModule`, a real `SensorModule<CmpMessage>`
+  chained after `TouchSensorModule`, making `CharacterGraphLM` the sole
+  `LearningModule` in this app's hierarchy — Monty's own common baseline
+  shape. This wasn't just a rename: it shed `receiveVotes`, `sendOutVote`,
+  `state`/`loadState`, and `setExperimentMode` entirely, since none of
+  those exist on `SensorModule` and every one of them had been a permanent
+  no-op here anyway. The one real wrinkle: `SensorModule.step()` must
+  return exactly one `CmpMessage` per call (no `getOutput()`-style
+  queueing), which only works because — verified, not assumed — a run
+  never needs to emit more than one finished primitive per incoming point;
+  and `postEpisode()` can't return a value for a still-open run at episode
+  end, so `drainTrailingPrimitive()` is this class's one deliberate,
+  documented addition beyond the plain `SensorModule` interface. See
+  `PrimitiveSensorModule.kt`'s class doc for the full design.
+
+  A sixth pass fixed the tight-loop gap the fourth pass had flagged and
+  left open — not by re-tuning the sharp-kink veto again, but by fixing
+  what was actually structurally wrong with the arc test itself: curvature
+  (a resampled circle's turning angle per step) is inherently
+  tightness-dependent, so a small tight loop and a genuine sharp corner can
+  measure similar curvature at a fixed resample density no matter where the
+  veto threshold sits — there's no single number that cleanly separates
+  them, because they're not actually different along the axis curvature
+  measures. The fix, prompted by asking whether arcs could be defined the
+  same way lines now are (a shape a point cloud fits *inside*, within a
+  shared tolerance, rather than a differently-scaled statistical test):
+  fit a least-squares circle through the window (an algebraic Kåsa fit,
+  computed in centered coordinates for stability — see
+  `PrimitiveSensorModule.kt`'s `fitCircle()`), and require every point to
+  lie within `WIDTH_TOLERANCE` of that circle's circumference — the same
+  tolerance the line test now uses, since a rectangle and a "donut" band
+  are the same idea (a max distance from an idealized curve) applied to a
+  straight shape versus a round one. A residual-from-fit is tightness-
+  independent: a clean loop of any radius sits close to *some* circle,
+  fixing the gap directly rather than papering over it with a better-tuned
+  veto. `MIN_ARC_MEAN_CURVATURE`/`ARC_CURVATURE_RELATIVE_TOLERANCE`/
+  `MIN_LINE_ASPECT_RATIO` were all removed in favor of the one shared
+  `WIDTH_TOLERANCE`.
+  
+  This did *not* eliminate the sharp-kink veto entirely, though an initial
+  attempt tried to: a circle has only 3 degrees of freedom, so a *short*
+  window can trivially find some large-radius circle passing within
+  tolerance of a moderate corner's two legs, "absorbing" a real ~130°
+  corner into one `ARC` instead of rejecting it — confirmed by the
+  corner-angle sweep test regressing the moment the veto was dropped. The
+  veto stayed, recalibrated (`MAX_LOCAL_TURN`, ~18°) into the comfortable
+  gap between the tight loop's own curvature (~15°, must not trip it) and
+  the shallowest corner still worth catching (~150° interior, ~20°
+  measured) — narrower and more defensive than before, not a
+  reintroduction of curvature as the primary classification signal.
 - **Multi-stroke composition remains the least theoretically settled part**
   of TBP itself (flagged as immature even in Monty) — the variant-based
   fallback is a pragmatic substitute for genuine compositional
@@ -913,18 +1119,82 @@ deliberately small.
   mistake unused interface surface for wasted effort; it's what makes Phase 8
   additive instead of a rewrite.
 - **Tier 1 isn't really a learning module yet** (§3.4/§4) — it classifies
-  primitives with fixed geometric thresholds, not a learned graph model the
-  way Tier 2 does. Fine for a small closed vocabulary like line/arc/corner,
-  but revisit if Phase 5's real-handwriting tuning turns up genuine
-  primitive-level ambiguity (a segment that's a borderline
-  line/arc call) that a hard threshold can't represent — the fix would be
-  reporting a per-type confidence rather than one committed type, decided
-  with a concrete need in hand rather than speculatively now.
+  primitives with fixed geometric fit tests, not a learned graph model the
+  way Tier 2 does. This turns out to be Monty-consistent rather than a
+  shortcut (see §3.4's "Known asymmetry" note — Monty's own SM computes
+  curvature via fixed math too), so it's not something to "fix" by making
+  Tier 1 learn a graph the way Tier 2 does. A related, deeper question —
+  should *segmentation itself* (not just classification) be a learned,
+  evidence-based process, the way Monty's own hierarchical LMs let object-
+  part boundaries emerge from a lower LM's evidence stream rather than a
+  fixed rule? — was deliberately not pursued: real Monty hasn't made that
+  robust for its own object/part composition either (flagged immature in
+  its own published work, same as the multi-stroke composition point
+  above), and it would trade one class of tunable threshold (fit tests)
+  for another (an evidence-decay boundary threshold) rather than removing
+  tunables altogether. Revisit if Phase 5's real-handwriting tuning turns
+  up genuine primitive-level ambiguity (a segment that's a borderline
+  line/arc call, or the tight-loop-vs-corner gap noted above) that the
+  current fit tests can't represent.
 - **When a design decision here is ambiguous, check real Monty's source
   before inventing something new** (see `CLAUDE.md` for the local reference
   checkout) — this app should stay legible to anyone who already knows
   Monty. The `getOutput`/`sendOutVote` split, dropping `getFeatureByName`
-  for typed payloads, and correcting the orchestrator's episode boundary to
-  be uniform across tiers instead of per-LM-type (§3.6) all came from doing
-  exactly this after an earlier design had drifted from Monty's actual
-  behavior.
+  for typed payloads, correcting the orchestrator's episode boundary to be
+  uniform across tiers instead of per-LM-type (§3.6), and reframing Tier
+  1's fixed-threshold design as SM-shaped work rather than a shortcut
+  (§3.4) all came from doing exactly this after an earlier assumption had
+  drifted from Monty's actual behavior.
+- **A bare `PrimitiveType` carried no size/shape information at all** — a
+  short `LINE` and a long `LINE` pointing the same direction, or a tight
+  `ARC` and a nearly-full-circle `ARC`, scored identically in `GraphMatcher`
+  since only orientation and position were ever compared. Fixed by adding
+  `PrimitiveMeasurement` (`Line(length)` / `Arc(sweepAngle)`) alongside
+  `PrimitiveType`, computed in `PrimitiveSensorModule.finalizeRun()` by
+  reusing the same circle fit already computed for classification (no
+  second fit): a line's `length` is the chord between the run's first and
+  last point (equivalent to arc length by definition, since every point
+  already lies within `WIDTH_TOLERANCE` of that chord); an arc's
+  `sweepAngle` is the *signed accumulated* per-step angular delta around
+  the fitted circle's center — not a single first-to-last subtraction,
+  which would fold a near-full-loop's sweep into a misleadingly short
+  apparent angle at the wraparound. `GraphMatcher.alignmentScore` folds
+  this in as a third averaged term (`sizeScore`), normalized per-variant
+  (length against `MAX_LENGTH_ERROR`, sweep angle against a plain, un-
+  wrapped full turn — a sweep angle is a total rotation amount, not a
+  periodic heading, so `angleDifference`'s wraparound logic would wrongly
+  treat two very different large sweeps as "close" near the 2π boundary).
+  `GraphMemory.mergeInto` averages it the same way (plain weighted mean for
+  both variants, not a circular mean, for the same reason).
+- **Two follow-up corrections to the above, both from user review:**
+  1. **An arc's `sweepAngle` alone still wasn't a complete size measure** —
+     a tight quarter-turn and a huge, gently-curving quarter-turn report the
+     same sweep angle and were still indistinguishable in size, the exact
+     gap that motivated adding a line's `length` in the first place. Fixed
+     by adding `radius` to `PrimitiveMeasurement.Arc` (already sitting in
+     the circle fit, just previously discarded), and folding a radius-error
+     term into `GraphMatcher`'s arc `sizeScore` (averaged with the
+     sweep-angle term, both normalized against the same normalized-space
+     scale a line's length uses).
+  2. **`PrimitiveType` (an enum) and `PrimitiveMeasurement` (a sealed
+     `Line`/`Arc` class) were two parallel discriminants for the same
+     fact** — a `LINE`-typed node always had a `Line` measurement and vice
+     versa, but nothing enforced that beyond both being constructed
+     together in one function. Fixed by deleting `PrimitiveType` entirely
+     and letting `PrimitiveMeasurement`'s own variant serve as the type —
+     `PrimitiveFeatures`/`GraphNode` now carry only `measurement`, and
+     `GraphMatcher`'s old `primitiveType != primitiveType` gate became a
+     `sameKind(measurement, measurement)` check on the sealed variant
+     instead. This was a deliberate choice *not* to also move
+     `GraphMatcher`'s `sizeScore` logic onto the `Line`/`Arc` classes
+     themselves (raised in the same review, as an OOP-dispatch-over-`when`
+     argument): `sizeScore`'s normalization constants
+     (`MAX_LENGTH_ERROR`, the full-turn scale) are matching-specific tuning
+     knobs — Monty's own `EvidenceGraphLM` takes an analogous `tolerances`
+     dict as an LM constructor parameter, not something its `SensorModule`
+     computes, because a raw sensor reading has nothing to compare itself
+     against yet. `PrimitiveMeasurement` lives in the `sensor` package and
+     only ever holds one measurement in isolation; the comparison
+     (`GraphMatcher`, `CharacterGraphLM`'s matcher) is where two values are
+     ever in scope at once, matching where Monty puts this same kind of
+     tolerance.

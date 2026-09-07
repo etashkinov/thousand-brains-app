@@ -44,10 +44,12 @@ this was designed in.
 
 Touch input is captured as raw (x, y, t) points per stroke — this is the
 **Sensor Module**'s input, and it's a literal sensorimotor trace, not a
-reconstruction. Points are resampled and normalized, then a **Tier-1 Learning
-Module** segments them into primitive shapes (lines, arcs, corners), each
-tagged with its pose *relative to the stroke*, not the screen. A **Tier-2
-Learning Module** composes those primitives into a character-level graph —
+reconstruction. Points are resampled and normalized, then a second **Sensor
+Module** segments them into primitive shapes (lines and arcs — a bend is
+just the boundary between two of them, not its own primitive type; see
+`IMPLEMENTATION_PLAN.md` §3.4/§7 for why), each tagged with its pose
+*relative to the stroke*, not the screen. A **Learning
+Module** composes those primitives into a character-level graph —
 nodes and edges with relative positions and tolerance-banded angles — and
 matches new input against every previously-taught character by accumulating
 evidence as the stroke is drawn. If two characters are equally well supported
@@ -62,10 +64,11 @@ order).
 ## Architecture
 
 ```
-Touch (MotionEvent) → SensorModule → Tier-1 PrimitiveLM → Tier-2 CharacterGraphLM → GraphMemory
-                                              ↑                      ↑
-                                     (same CmpMessage         (evidence accumulation,
-                                      schema at every tier)    merge/spawn decisions)
+Touch (MotionEvent) → SensorModule → PrimitiveSensorModule → CharacterGraphLM → GraphMemory
+                            ↑                  ↑                    ↑
+                   (same CmpMessage    (fixed feature      (the one LearningModule —
+                    schema throughout)  extraction, not     evidence accumulation,
+                                        learned — see below) merge/spawn decisions)
 ```
 
 This is deliberately **not** a simplified, inspired-by version of Monty's
@@ -82,27 +85,34 @@ design — it ports Monty's actual published interfaces:
   of `get_feature_by_name("...")` lookups — same message uniformity, no
   unsafe casts.
 - **`SensorModule`** / **`LearningModule`** are ports of Monty's abstract base
-  classes, including the real per-step contract: a **modeling step**
+  classes. `LearningModule`'s real per-step contract: a **modeling step**
   (`matchingStep`, ~ Monty's `matching_step`) followed by a **voting step**
   (`receiveVotes`, ~ Monty's `receive_votes`), a **feed-forward output**
   (`getOutput`, ~ Monty's `get_output` — always a single-hypothesis point
   estimate, never a distribution, matching what Monty itself does), plus
   `preEpisode`/`postEpisode` lifecycle hooks and a `state`/`loadState`
-  save-load contract. The lifecycle hooks bound the **same episode for
-  every tier at once** — one full character, however many strokes it takes
-  — mirroring Monty's `MontyBase.reset()`, which resets every sensor and
-  learning module identically regardless of hierarchy position; there's no
-  per-tier episode scoping in Monty, so there isn't one here either.
+  save-load contract. `SensorModule` is deliberately thinner — `step`,
+  `preEpisode`, `postEpisode`, nothing else — because Monty's own sensor
+  modules don't vote, don't persist learned state, and don't have
+  training-vs-eval behavior; only `LearningModule` does. Every lifecycle
+  hook bounds the **same episode for the whole pipeline at once** — one
+  full character, however many strokes it takes — mirroring Monty's
+  `MontyBase.reset()`, which resets every sensor and learning module
+  identically regardless of hierarchy position; there's no per-tier
+  episode scoping in Monty, so there isn't one here either.
 - **`GraphObjectModel`** / **`GraphMemory`** mirror Monty's own object-model
   storage, down to reusing the concept (and naming intent) of Monty's
   `detect_new_object_k_steps` — the actual mechanism Monty uses to decide
   whether new evidence should merge into an existing learned model or spawn a
   new one.
-- Both tiers implement the **same `LearningModule` interface** — Monty's
-  "repeating computational unit" principle: a higher tier's input looks
-  exactly like a lower tier's output, so the hierarchy can in principle be
-  extended without new plumbing. (Currently only Tier 2 has real learned
-  memory behind that interface — see Known limitations.)
+- **Only one `LearningModule`, and that's Monty-faithful, not a shortcut.**
+  `CharacterGraphLM` is the sole `LearningModule` in this app's hierarchy;
+  primitive segmentation (line/arc fitting) is `PrimitiveSensorModule`, a
+  `SensorModule` chained after the raw touch sensor. Real Monty's own
+  `SensorModule` computes features like curvature via fixed, deterministic
+  math too — not a learned model — so a single-sensor-chain, single-LM
+  hierarchy is Monty's own ordinary baseline configuration, not a
+  stripped-down one. See Known limitations for the full reasoning.
 
 Full interface listings, code, and an explicit table of what's a faithful
 port vs. a deliberate simplification (mainly: 2D instead of 3D, and no
@@ -118,9 +128,9 @@ the build level, not just by convention:
 
 - **`lib`** — a plain **Kotlin/JVM module** (`kotlin("jvm")`, not
   `com.android.library`). It contains *all* of the brain: `CmpMessage`, the
-  `SensorModule`/`LearningModule` interfaces, `PrimitiveLM`,
-  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher` (the
-  `MontyOrchestrator` wiring them into a real step loop is Phase 4).
+  `SensorModule`/`LearningModule` interfaces, `PrimitiveSensorModule`,
+  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher`, and
+  `MontyOrchestrator` wiring them into a real step loop.
   The Android SDK is not on its classpath, so nothing in it can import
   `android.*` even by accident. Its public API only ever exchanges plain
   Kotlin data (data classes, `Map`/`List`, primitives) — never a
@@ -170,12 +180,14 @@ lib/                        # Kotlin/JVM module — NO Android SDK dependency
       RawPoint.kt             # plain 2D point crossing the lib/app boundary
       RawTouchObservation.kt
       SensorModule.kt         # generic interface: SensorModule<T>
-      StrokePreprocessor.kt   # resample, normalize, tangent/curvature
+      StrokePreprocessor.kt   # resample, smooth, normalize, tangent/curvature
       TouchSensorModule.kt    # SensorModule<RawTouchObservation>; StrokeFeatures payload
+      PrimitiveSensorModule.kt # SensorModule<CmpMessage>; line/arc fit tests, PrimitiveMeasurement (type+size)/PrimitiveFeatures
     lm/
       LearningModule.kt       # shared interface: matchingStep/receiveVotes/sendOutVote/getOutput
-      PrimitiveLM.kt          # Tier 1; PrimitiveType, PrimitiveFeatures payload
-      CharacterGraphLM.kt     # Tier 2; evidenceSnapshot(), teach()
+      CharacterGraphLM.kt     # the one LearningModule; evidenceSnapshot(), possibleMatches(), teach()
+    orchestrator/
+      MontyOrchestrator.kt    # wires the sensor chain into CharacterGraphLM, per-character episodes
     memory/
       GraphObjectModel.kt     # GraphNode, GraphEdge, GraphObjectModel, edgeChainOf
       GraphMatcher.kt         # order/direction-tolerant matching
@@ -190,10 +202,15 @@ app/                         # Android application module, depends on :lib
   src/main/kotlin/.../
     sensor/
       TouchObservationAdapter.kt  # Offset -> RawPoint mapping (thin, no recognition logic)
+    viewmodel/
+      RecognizerViewModel.kt  # owns the MontyOrchestrator, exposes Compose state
     ui/
       DrawingCanvas.kt        # MotionEvent capture + live stroke rendering
-      DrawingScreen.kt        # owns stroke state, composes canvas + toolbar
-      DrawingToolbar.kt       # undo/clear
+      DrawingScreen.kt        # composes canvas, evidence bars, toolbar/result panel
+      DrawingToolbar.kt       # undo/clear/done
+      EvidenceBars.kt         # live per-label match evidence
+      RecognitionResultPanel.kt # teach/confirm-correct/disambiguate, driven by RecognitionResult
+      LmStateOverlay.kt       # debug overlay: primitives this episode + graphs learned
     MainActivity.kt
   src/androidTest/.../        # adapter + Compose UI smoke tests only
 
@@ -201,10 +218,6 @@ IMPLEMENTATION_PLAN.md        # phased build plan, full interface code, mapping 
 README.md                     # this file
 CLAUDE.md                     # notes for AI assistants working on this repo
 ```
-
-`MontyOrchestrator` (wiring the sensor and both tiers into a real step
-loop) and the `app`-side teach/recognize UI and persistence adapter are
-Phase 4+ — not built yet; see Status/Roadmap.
 
 ---
 
@@ -214,26 +227,36 @@ See **[`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md)** for the full
 phase-by-phase plan (Phases 0–7 for the touchscreen app, Phase 8 for the
 static-image/multi-LM-voting stretch goal) and testing strategy.
 
-**Phases 0–3 are done:** `lib`'s full brain pipeline — touch resampling
-(Phase 1), primitive segmentation (Phase 2), and character-graph learning
-and recognition (Phase 3) — is built and unit-tested end to end (38 tests),
-including each phase's own concrete exit criterion. There's no UI hooked up
-to it yet and no persisted state between runs — **Phase 4** (wiring the
-touch canvas already in `app` to this pipeline, plus the teach/recognize
-screens) is next.
+**Phases 0–4 are done:** `lib`'s full brain pipeline — touch resampling,
+primitive segmentation, character-graph learning and recognition, and the
+`MontyOrchestrator` step loop — plus `app`'s teach/recognize UI are built
+and tested end to end (55 `lib` unit tests), including each phase's own
+concrete exit criterion. There's no persisted state between runs yet
+(Phase 7's job). **Phase 5** (merge/spawn and primitive-fit tuning against
+real handwriting) is next.
 
 ---
 
 ## Known limitations (by design, not oversight)
 
-- **Only Tier 2 has real learned memory.** In Monty, every LM at every tier
-  builds and matches against its own learned graph model. `CharacterGraphLM`
-  does; `PrimitiveLM` currently classifies line/arc/corner with fixed
-  geometric thresholds, not a learned model — it satisfies the
-  `LearningModule` interface without yet being a genuine *learning* module.
-  Reasonable for now because primitives are a small, closed, geometrically-
-  definable vocabulary unlike open-ended taught characters, but it's a real
-  simplification worth knowing about, not an oversight.
+- **Only one `LearningModule` exists in this app's hierarchy — and that's
+  Monty-consistent, not a shortcut.** `CharacterGraphLM` builds and matches
+  a learned graph model; primitive segmentation (line/arc fitting — distance
+  from a best-fit line or circle, within one shared tolerance) is
+  `PrimitiveSensorModule`, a `SensorModule`, not a `LearningModule` at all.
+  It used to implement
+  `LearningModule<Unit>` — satisfying the interface without being a genuine
+  *learning* module, since `state()` was always `Unit` and
+  `receiveVotes`/`sendOutVote`/`setExperimentMode` were permanent no-ops.
+  Checking real Monty's own `SensorModule` showed it computes curvature via
+  fixed least-squares math too, not a learned model — so this tier's job
+  was architecturally SM-shaped work all along, and it's modeled as one
+  now. A single-sensor-chain, single-LM hierarchy (this app's actual
+  shape, `CharacterGraphLM` being the only `LearningModule`) is Monty's own
+  ordinary baseline configuration, not a stripped-down one. See
+  `IMPLEMENTATION_PLAN.md` §3.4's "Known asymmetry" note for the full
+  reasoning, including why the same fixed-threshold vocabulary reasonably
+  extends to line/arc but not to open-ended taught characters.
 - **No general compositional part-swapping.** Real hierarchical composition
   (recognizing a novel combination of familiar parts) is flagged as immature
   even in Monty's own published work; this app's multi-variant-per-label

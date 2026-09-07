@@ -1,5 +1,6 @@
 package com.eta.tbp.lib.memory
 
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -70,6 +71,13 @@ class GraphMemory {
                             candidateNode.absoluteAngle,
                             totalWeight,
                         ),
+                    measurement =
+                        weightedAverageMeasurement(
+                            storedNode.measurement,
+                            existingWeight,
+                            candidateNode.measurement,
+                            totalWeight,
+                        ),
                 )
             }
 
@@ -90,6 +98,37 @@ class GraphMemory {
             (stored[0] * storedWeight + candidate[0]) / totalWeight,
             (stored[1] * storedWeight + candidate[1]) / totalWeight,
         )
+
+    /**
+     * Plain weighted average, per variant. Unlike [weightedAverageAngle],
+     * neither [PrimitiveMeasurement] field is a periodic heading that needs
+     * wraparound-aware averaging: a line's length is already a plain
+     * magnitude, and an arc's sweep angle is a total accumulated rotation
+     * (see [com.eta.tbp.lib.sensor.PrimitiveSensorModule.sweepAngleOf]), not
+     * a direction mod 2*PI, and a radius is a plain magnitude too. [stored]
+     * and [candidate] are always the same variant here —
+     * [GraphMatcher.bestAlignedWindow] only aligns nodes whose
+     * [GraphNode.measurement] variant already matched.
+     */
+    private fun weightedAverageMeasurement(
+        stored: PrimitiveMeasurement,
+        storedWeight: Float,
+        candidate: PrimitiveMeasurement,
+        totalWeight: Float,
+    ): PrimitiveMeasurement =
+        when (stored) {
+            is PrimitiveMeasurement.Line -> {
+                candidate as PrimitiveMeasurement.Line
+                PrimitiveMeasurement.Line((stored.length * storedWeight + candidate.length) / totalWeight)
+            }
+            is PrimitiveMeasurement.Arc -> {
+                candidate as PrimitiveMeasurement.Arc
+                PrimitiveMeasurement.Arc(
+                    sweepAngle = (stored.sweepAngle * storedWeight + candidate.sweepAngle) / totalWeight,
+                    radius = (stored.radius * storedWeight + candidate.radius) / totalWeight,
+                )
+            }
+        }
 
     /** Circular weighted mean via the sin/cos trick, so averaging never breaks at the +-PI wraparound. */
     private fun weightedAverageAngle(

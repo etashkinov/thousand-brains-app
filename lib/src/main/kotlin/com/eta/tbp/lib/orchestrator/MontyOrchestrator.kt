@@ -1,23 +1,31 @@
 package com.eta.tbp.lib.orchestrator
 
 import com.eta.tbp.lib.lm.CharacterGraphLM
-import com.eta.tbp.lib.lm.PrimitiveLM
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.RawTouchObservation
 import com.eta.tbp.lib.sensor.SensorModule
 import com.eta.tbp.lib.sensor.StrokePreprocessor
 
 /**
- * Mirrors real Monty's `MontyBase`/step loop, wiring one [SensorModule] and
- * the two [com.eta.tbp.lib.lm.LearningModule] tiers into a real step loop.
- * Lives in its own package rather than `lm` because it isn't itself a
- * `LearningModule` — the same relationship Monty's own `monty_base.py` has
- * to `sensor_modules.py`/`learning_module.py`.
+ * Mirrors real Monty's `MontyBase`/step loop, wiring a two-stage sensor
+ * pipeline ([SensorModule] into [PrimitiveSensorModule]) into the one
+ * [com.eta.tbp.lib.lm.LearningModule] in this app's hierarchy,
+ * [CharacterGraphLM]. Lives in its own package rather than `lm` because it
+ * isn't itself a `LearningModule` — the same relationship Monty's own
+ * `monty_base.py` has to `sensor_modules.py`/`learning_module.py`.
+ *
+ * There's only one `LearningModule` here, not two: `PrimitiveSensorModule`
+ * does rule-based feature extraction (line/arc fitting), which is
+ * architecturally SM-shaped work in Monty's own terms, not LM-shaped work
+ * — see its class doc and IMPLEMENTATION_PLAN.md §3.4/§4. A single-SM-
+ * chained-into-another-SM, single-LM hierarchy like this one is Monty's
+ * own ordinary baseline configuration, not a stripped-down special case.
  *
  * Episode boundary is one full character (however many strokes it takes),
- * uniform across both tiers — see IMPLEMENTATION_PLAN.md §3.6 for why an
- * earlier, per-stroke-scoped draft of this class was wrong.
+ * uniform across the whole pipeline — see IMPLEMENTATION_PLAN.md §3.6 for
+ * why an earlier, per-stroke-scoped draft of this class was wrong.
  *
  * Normalization ([StrokePreprocessor.normalize]) needs every stroke drawn
  * so far to compute a shared centroid/scale — otherwise each stroke of a
@@ -31,7 +39,7 @@ import com.eta.tbp.lib.sensor.StrokePreprocessor
  */
 class MontyOrchestrator(
     private val sensorModule: SensorModule<RawTouchObservation>,
-    private val tier1: PrimitiveLM,
+    private val primitiveSensor: PrimitiveSensorModule,
     private val tier2: CharacterGraphLM,
 ) {
     private val strokePoints = mutableListOf<List<RawPoint>>()
@@ -76,31 +84,26 @@ class MontyOrchestrator(
 
     /**
      * Recomputes the whole character from scratch against every stroke in
-     * [strokePoints]. `tier1.preEpisode()`/`postEpisode()` fire on every
-     * replay — harmless since [PrimitiveLM] is fully stateless across calls
-     * (its `state()` is `Unit`) — so evidence stays live as strokes are
-     * added or removed. `tier2.postEpisode()` deliberately does NOT fire
-     * here: its only consequential effect (snapshotting the completed graph
-     * for [teach]) is reserved for the true end of the character, in
-     * [endCharacter].
+     * [strokePoints]. `primitiveSensor.preEpisode()`/`postEpisode()` fire
+     * on every replay — harmless since it's fully stateless across calls
+     * — so evidence stays live as strokes are added or removed.
+     * `tier2.postEpisode()` deliberately does NOT fire here: its only
+     * consequential effect (snapshotting the completed graph for [teach])
+     * is reserved for the true end of the character, in [endCharacter].
      */
     private fun replay() {
-        tier1.preEpisode()
+        primitiveSensor.preEpisode()
         tier2.preEpisode()
         for (observations in buildNormalizedObservations()) {
             for (observation in observations) {
-                tier1.matchingStep(listOf(sensorModule.step(observation)))
-                drainTier1IntoTier2()
+                val touchMessage = sensorModule.step(observation)
+                val primitiveMessage = primitiveSensor.step(touchMessage)
+                tier2.matchingStep(listOf(primitiveMessage))
+                tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
             }
         }
-        tier1.postEpisode()
-        drainTier1IntoTier2()
-    }
-
-    private fun drainTier1IntoTier2() {
-        val outputs = generateSequence { tier1.getOutput() }.toList()
-        if (outputs.isNotEmpty()) tier2.matchingStep(outputs)
-        tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
+        primitiveSensor.postEpisode()
+        primitiveSensor.drainTrailingPrimitive()?.let { tier2.matchingStep(listOf(it)) }
     }
 
     /**

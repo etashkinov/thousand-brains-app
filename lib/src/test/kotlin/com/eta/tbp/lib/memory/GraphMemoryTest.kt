@@ -1,6 +1,6 @@
 package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.lm.PrimitiveType
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,8 +11,8 @@ class GraphMemoryTest {
         x: Float,
         y: Float,
         angle: Float,
-        type: PrimitiveType = PrimitiveType.LINE,
-    ) = GraphNode(id, floatArrayOf(x, y), angle, type)
+        measurement: PrimitiveMeasurement = PrimitiveMeasurement.Line(1f),
+    ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
 
     private fun staircase(jitter: Float = 0f): List<GraphNode> =
         listOf(
@@ -53,8 +53,8 @@ class GraphMemoryTest {
 
         val differentShape =
             listOf(
-                node(0, -1f, -1f, 3f, PrimitiveType.ARC),
-                node(1, 1f, 1f, -1f, PrimitiveType.LINE),
+                node(0, -1f, -1f, 3f, PrimitiveMeasurement.Arc(1f, 1f)),
+                node(1, 1f, 1f, -1f, PrimitiveMeasurement.Line(1f)),
             )
         memory.addOrMerge(modelOf("a", differentShape), "a")
 
