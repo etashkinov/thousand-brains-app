@@ -92,8 +92,11 @@ fun LmStateOverlay(
 }
 
 /** A primitive's type plus its measurement (length or sweep angle) — see [PrimitiveMeasurement]. */
-private fun describe(node: GraphNode): String =
-    when (val measurement = node.measurement) {
+private fun describe(node: GraphNode): String = describe(node.measurement)
+
+/** Formats a single measurement as `LINE(len=…)` / `ARC(∠=…°)` — shared with [DrawingCanvas]'s on-canvas primitive overlay labels. */
+internal fun describe(measurement: PrimitiveMeasurement): String =
+    when (measurement) {
         is PrimitiveMeasurement.Line -> "LINE(len=${"%.2f".format(measurement.length)})"
         is PrimitiveMeasurement.Arc -> "ARC(∠=${"%.0f".format(Math.toDegrees(measurement.sweepAngle.toDouble()))}°)"
     }

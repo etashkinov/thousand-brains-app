@@ -274,6 +274,38 @@ class PrimitiveSensorModuleTest {
     }
 
     @Test
+    fun `a gentle S-curve sharing one stroke's resample budget doesn't fragment into spurious lines`() {
+        // Regression test for a real hand-drawn bug report: a smooth S drawn
+        // as one continuous stroke was fragmenting into ~5 meaningless LINE
+        // segments. Root cause was in StrokePreprocessor.tangentsAndCurvatures
+        // (see its class doc): curvature used to be a bare per-resampled-step
+        // turning angle, which is NOT invariant to how many points a given
+        // curve gets out of the fixed DEFAULT_RESAMPLE_COUNT-per-stroke
+        // budget -- an S-curve's two lobes only get half that budget each
+        // (sharing it with the rest of the S), so the same true curvature
+        // measured roughly double what a single semicircle filling the
+        // whole budget alone would show, spuriously tripping
+        // PrimitiveSensorModule's sharp-corner veto (MAX_LOCAL_TURN) at
+        // many points along an otherwise perfectly smooth curve. Now that
+        // curvature is real, density-invariant differential curvature
+        // (radians per unit length), a gentle S like this should segment
+        // into a small, cohesive handful of primitives, not five-plus
+        // spurious fragments.
+        val amplitude = 60f
+        val length = 600f
+        val sCurve =
+            List(150) { i ->
+                val t = i / 149f
+                RawPoint(amplitude * sin(2 * PI * t).toFloat(), length * t)
+            }
+        val primitives = drivePrimitives(sCurve)
+        assertTrue(
+            "expected at most 2 cohesive primitives but got ${primitiveTypesOf(primitives)}",
+            primitives.size <= 2,
+        )
+    }
+
+    @Test
     fun `a stroke gap force-breaks a run even when tangent stays consistent`() {
         // Two collinear diagonal strokes with a pen-lift gap between them: nothing
         // about the tangent trips the fit test, so without the strokeIndex

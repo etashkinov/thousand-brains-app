@@ -665,6 +665,15 @@ class MontyOrchestrator(
         primitiveSensor.postEpisode()
         primitiveSensor.drainTrailingPrimitive()?.let { tier2.matchingStep(listOf(it)) }
     }
+    // Each passMessage=true primitive message is also recorded as a
+    // PrimitiveOverlay (measurement + on-screen bounding box) for a debug
+    // canvas overlay, alongside the tier2.matchingStep() call above — see
+    // §7's entry on this for why the bounding box is exact rather than an
+    // inverse-normalization approximation: buildNormalizedObservations()
+    // below stashes each stroke's resampled points from *right before*
+    // normalization, and a primitive's PrimitiveFeatures.startIndex/
+    // endIndex/strokeIndex slice directly into that same array (same index
+    // order), so the box is just a min/max over the sliced raw-pixel points.
 
     /** Resamples each stroke independently, but normalizes them together — see the note above. */
     private fun buildNormalizedObservations(): List<List<RawTouchObservation>> {
@@ -901,19 +910,20 @@ lives in `lib` and runs as plain JUnit on the JVM; `app`'s test surface is
 deliberately small.
 
 - **`lib` unit tests (`:lib:test`, plain JUnit, JVM only — no emulator, no
-  Robolectric) — 63 tests as of the `PrimitiveMeasurement` radius/merge
-  follow-up, across:**
+  Robolectric) — 67 tests as of the curvature/`MAX_LOCAL_TURN` fix, across:**
   - `StrokePreprocessorTest` — resampling, normalization, tangent/curvature,
     the fast/slow + small/large invariance exit criterion, plus `smooth()`.
   - `TouchSensorModuleTest`, `CmpMessageTest` — message construction/accessors.
   - `PrimitiveSensorModuleTest` — line/arc segmentation across synthetic
     shapes and realistic jitter, the corner-angle sweep (no dedicated
     corner type — see §3.4/§7), the one-stroke-vs-two-strokes regression
-    test for why that type was dropped, and `PrimitiveMeasurement` cases
+    test for why that type was dropped, `PrimitiveMeasurement` cases
     (a line's chord length, a semicircle's/tight loop's sweep angle, that a
     longer leg reports a larger length than a shorter one, and that a
     shallow arc reports a larger circle radius than a semicircle sliced
-    from the same normalized size).
+    from the same normalized size), and a gentle S-curve sharing one
+    stroke's resample budget staying cohesive rather than fragmenting (the
+    regression test for the real-drawing curvature bug in §7).
   - `GraphMatcherTest` — order/direction tolerance, mismatched-kind/count
     rejection, partial-match prefix tracking, and that a `measurement`
     mismatch alone (same positions/angles, different line length or arc
@@ -924,7 +934,11 @@ deliberately small.
     cases, plus a `getOutput()`/`evidenceSnapshot()` coherence check.
   - `MontyOrchestratorTest` — step-loop behavior driven by synthetic
     multi-stroke `RawPoint` sequences, including a pen lift mid-character,
-    undo/clear, and cross-stroke position discrimination — no real
+    undo/clear, cross-stroke position discrimination,
+    `currentPrimitiveOverlays()` reporting bounding boxes in raw touch
+    coordinates (not normalized space) with one entry per primitive, and a
+    taught corner shape not spuriously matching an unrelated arc (the
+    orchestrator-specific half of the curvature-scale bug in §7) — no real
     touchscreen or device needed.
   - `state()`/`loadState()` round-trips on plain Kotlin data — only
     `CharacterGraphLM` has this contract now; `PrimitiveSensorModule` is a
@@ -1198,3 +1212,97 @@ deliberately small.
      (`GraphMatcher`, `CharacterGraphLM`'s matcher) is where two values are
      ever in scope at once, matching where Monty puts this same kind of
      tolerance.
+- **A canvas overlay drawing boxes around detected primitives needed their
+  on-screen extent, which nothing already stored carried.** `GraphNode`'s
+  `location` lives in normalized space (translate-by-centroid, scale-by-
+  bounding-radius — see §3.6), not the raw touch-pixel space the canvas
+  draws in, and `absoluteAngle`/`measurement` alone don't pin down a
+  rectangle's corners anyway (an arc's extent isn't just its center +
+  radius). Two options: invert the normalization transform to map
+  `location` back to pixels, or track the primitive's actual on-screen
+  points directly. Went with the latter — `MontyOrchestrator.replay()`
+  already resamples+smooths every stroke into fixed-size point arrays
+  *before* calling `StrokePreprocessor.normalize()` on them
+  (`buildNormalizedObservations()`); stashing that pre-normalization array
+  (`rawResampledPerStroke`) means a primitive's `PrimitiveFeatures.startIndex`/
+  `endIndex`/`strokeIndex` (already carried on its `CmpMessage`, previously
+  unused past `PrimitiveSensorModule`) slice directly into it, and a min/max
+  over that slice is the exact on-screen bounding box — no inverse-transform
+  math, no approximation. This became a new `PrimitiveOverlay(measurement,
+  topLeft, bottomRight)` type and `MontyOrchestrator.currentPrimitiveOverlays()`
+  query, following the same "direct introspection query, not a `CmpMessage`"
+  pattern as `evidenceSnapshot()`/`currentNodes()`. `DrawingCanvas` draws one
+  rectangle per overlay (padded out to a minimum visible size, since a
+  line's own bounding box is legitimately near-zero-width by construction)
+  with a text label reusing `LmStateOverlay`'s `describe(measurement)`
+  formatting, so the two debug views of the same data read identically.
+- **The new overlay rendered blurry.** `DrawingCanvas`'s single `Canvas`
+  had `.blur(STROKE_FEATHER_RADIUS)` on its modifier chain to feather the
+  stroke's own edges (a soft pencil look) — but `.blur()` is a graphics-
+  layer effect that blurs *everything* that `Canvas`'s `DrawScope` draws,
+  not just the stroke lines it was meant for, so the overlay rectangles and
+  labels drawn in the same `DrawScope` came out blurred too. Fixed by
+  splitting into two stacked `Canvas`es in one `Box` — the original
+  (blurred) one keeps the strokes and all touch input handling, and a new
+  unblurred one on top draws just the primitive overlay. Both `fillMaxSize()`
+  the same `Box`, so their coordinate spaces line up exactly with no extra
+  mapping needed.
+- **Real hand-drawn curves were segmenting into a handful of meaningless
+  `LINE` fragments instead of staying as one or two smooth `ARC`s** — the
+  bug report that prompted this. Root cause, found by reproducing the
+  reported S-curve shape as a unit test and inspecting per-point curvature
+  (same empirical methodology as every other calibration pass in this
+  section): `StrokePreprocessor.tangentsAndCurvatures`'s `curvature` was
+  always a bare per-resampled-step turning angle, not real 1/radius
+  curvature — its own doc comment even flagged this as a known
+  simplification "sufficient for Phase 2's tangent-stability segmentation"
+  at the time. A bare turning angle is *not* invariant to how many points a
+  given curve happens to get out of the fixed `DEFAULT_RESAMPLE_COUNT`
+  budget a stroke is resampled to: the exact same true semicircle measures
+  roughly double the per-step turning angle when it only gets half that
+  budget (because it's sharing a stroke with a second lobe of an S, say)
+  than when it gets the whole budget to itself. `PrimitiveSensorModule`'s
+  sharp-corner veto (`MAX_LOCAL_TURN`) compares this value against a fixed
+  threshold meant to catch genuine corners — calibrated only against
+  single-primitive synthetic shapes, it had no way to account for this, so
+  a perfectly smooth arc sharing a stroke with other primitives could
+  spuriously exceed it and get chopped into fragments at every "corner"
+  candidate point.
+  - **Fix**: `tangentsAndCurvatures` now divides the turning-angle delta by
+    the arc length it spans, giving real differential curvature (κ = dθ/ds,
+    radians per unit length, ≈ 1/radius for a circle) — a measure that
+    genuinely doesn't care how densely a curve got resampled. Verified
+    empirically: a tight full loop and a lone semicircle, resampled at very
+    different densities, now both measure curvature close to 1.0-1.2
+    (matching their shared unit radius), where the old bare-angle measure
+    gave wildly different numbers depending on point count.
+  - **`MAX_LOCAL_TURN` recalibrated** against the same corner-angle-sweep/
+    tight-loop boundary cases as before, now in the new units: legitimate
+    arcs (tight loop ~1.0, lone semicircle ~1.2, a 170-degree near-straight
+    bend ~1.3) must not trip it; the shallowest corner this app still needs
+    to catch (150 degrees interior) measures ~4.0. The gap here (~1.3 to
+    ~4.0, roughly 3x) is far more comfortable than the old bare-angle
+    version's (~15 to ~20 degrees, roughly 1.3x) specifically *because*
+    true curvature actually separates "smooth, however tight" from
+    "genuinely sharp" — a resample-density-dependent angle only
+    accidentally managed that separation for the single-primitive shapes it
+    was tuned against.
+  - **A second, orchestrator-specific bug surfaced by this fix**:
+    `MontyOrchestrator.buildNormalizedObservations()` computed curvature on
+    each stroke's points *before* the shared normalization step, as a
+    documented optimization — valid when curvature was a bare turning angle
+    (rotation/scale-invariant, so pre- and post-normalization gave the same
+    answer), but silently wrong once curvature became length-normalized
+    (which very much depends on absolute scale). A small raw-pixel shape
+    like a synthetic test "L" measured a corner curvature roughly an order
+    of magnitude smaller than it should have in the shared normalized
+    space the rest of the pipeline (including `MAX_LOCAL_TURN` itself)
+    operates in — so the corner veto silently never tripped, and a taught
+    "L" got stored as `[ARC, LINE]` instead of `[LINE, LINE]`, spuriously
+    matching unrelated arc-shaped input. This one only reproduced through
+    the real orchestrator, not by driving `PrimitiveSensorModule` directly
+    (which already computed curvature correctly via `StrokePreprocessor.
+    preprocess`'s own normalize-then-curvature ordering) — exactly the kind
+    of divergence a "two code paths computing the same thing" duplication
+    invites. Fixed by computing curvature on the post-normalization
+    `normalizedChunk` instead of the pre-normalization `resampled` points.

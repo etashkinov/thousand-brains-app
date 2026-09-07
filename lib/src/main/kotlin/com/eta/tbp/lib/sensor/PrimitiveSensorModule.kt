@@ -4,7 +4,6 @@ import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.MorphologicalFeatures
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.util.angleDifference
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -564,12 +563,38 @@ class PrimitiveSensorModule(
         // trivially find SOME large-radius circle that passes within
         // WIDTH_TOLERANCE of a moderate corner's two legs -- distance-from-
         // fit alone isn't enough with few points. This veto catches that
-        // locally, calibrated between a tight loop's own measured curvature
-        // (~15 degrees at DEFAULT_RESAMPLE_COUNT -- must NOT trip this, or
-        // the tight-loop bug that motivated the distance-based arc test
-        // reappears) and the shallowest corner this app still needs to
-        // catch (~150 degrees interior, ~20 degrees measured -- see
-        // PrimitiveSensorModuleTest's corner-angle sweep).
-        const val MAX_LOCAL_TURN = PI / 10f // ~18 degrees
+        // locally, using point.curvature -- true differential curvature
+        // (radians per unit normalized length, roughly 1/radius; see
+        // StrokePreprocessor.tangentsAndCurvatures's class doc), NOT a bare
+        // per-resampled-step turning angle. That distinction matters: an
+        // earlier version compared a bare turning angle against a threshold
+        // tuned on single-primitive synthetic shapes, which broke down on a
+        // real multi-primitive stroke -- the same true semicircle measures a
+        // much smaller turning angle per step when it gets the *whole*
+        // DEFAULT_RESAMPLE_COUNT budget to itself than when it shares that
+        // fixed budget with another primitive in the same stroke (half the
+        // points over the same turn = double the apparent per-step angle),
+        // so a perfectly smooth arc in a multi-primitive character could
+        // spuriously exceed a threshold calibrated against single-primitive
+        // test shapes and fragment into meaningless line segments (see
+        // IMPLEMENTATION_PLAN.md §7 for the real-drawing repro). True
+        // curvature doesn't have this problem: it's normalized by the arc
+        // length each turning-angle sample spans, so a given radius reads
+        // the same regardless of how many points happen to be spent
+        // resampling it.
+        //
+        // Calibrated between the largest curvature a legitimate arc this
+        // app already needs to support should show (a tight full loop or a
+        // bare semicircle, both ~1.0-1.2, and a 170-degree near-straight
+        // bend at ~1.3 -- none of these are "corners" and must NOT trip
+        // this) and the smallest curvature the shallowest corner this app
+        // still needs to catch shows (~150 degrees interior, ~4.0 measured
+        // -- see PrimitiveSensorModuleTest's corner-angle sweep). The gap
+        // here (~1.3 to ~4.0) is far more comfortable than the old bare-
+        // angle version's (~15 to ~20 degrees) precisely because true
+        // curvature actually separates "smooth, however tight" from
+        // "genuinely sharp," where a resample-density-dependent angle only
+        // accidentally did so for single-primitive shapes.
+        const val MAX_LOCAL_TURN = 2.2f // radians per unit normalized length (~1/0.45 -- see above)
     }
 }

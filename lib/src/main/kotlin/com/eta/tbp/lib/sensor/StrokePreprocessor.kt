@@ -140,15 +140,35 @@ object StrokePreprocessor {
     /**
      * Tangent angle per point via central difference (direction to the next
      * point, or from the previous point at the ends). Curvature is the
-     * wrapped turning-angle delta between consecutive segments — a turning
-     * angle per resampled step, not strict 1/radius curvature, which is
-     * sufficient for Phase 2's tangent-stability segmentation. A stroke's
-     * first/last point has no second neighbor to center a difference on, so
-     * its curvature is clamped to its nearest interior neighbor's rather
-     * than forced to 0 — otherwise every stroke would report an artificial
-     * "flattening out" right at its endpoints, which Phase 2's segmenter
-     * would mistake for the start of a straight line. Both are 0 when there
-     * are too few points to define a curvature at all.
+     * wrapped turning-angle delta between consecutive segments divided by
+     * the arc length spanned by those segments — real differential-geometry
+     * curvature (κ = dθ/ds, radians per unit length; ≈ 1/radius for a
+     * circle), not a bare per-step turning angle.
+     *
+     * This division matters: an earlier version returned the bare angle
+     * delta, undocumented as being anything other than "sufficient for
+     * Phase 2's tangent-stability segmentation" at the time. That measure
+     * is NOT invariant to how densely a curve happens to be resampled — the
+     * same true semicircle resampled to 24 points (because it's sharing a
+     * fixed 48-point-per-stroke budget with a second primitive in the same
+     * stroke) reports roughly double the per-step turning angle of the same
+     * semicircle resampled to 48 points alone, purely from having half as
+     * many steps to cover the same 180° turn. [PrimitiveSensorModule]'s
+     * sharp-corner veto (`MAX_LOCAL_TURN`) compares this value against a
+     * fixed threshold meant to catch genuine corners, not resample density —
+     * dividing by arc length is what makes a smooth arc read as smoothly
+     * curved regardless of how many strokes/primitives share its character's
+     * resample budget, instead of spuriously tripping the corner veto and
+     * fragmenting into meaningless line segments (see IMPLEMENTATION_PLAN.md
+     * §7 for the concrete real-drawing repro that surfaced this).
+     *
+     * A stroke's first/last point has no second neighbor to center a
+     * difference on, so its curvature is clamped to its nearest interior
+     * neighbor's rather than forced to 0 — otherwise every stroke would
+     * report an artificial "flattening out" right at its endpoints, which
+     * the segmenter would mistake for the start of a straight line. Both
+     * are 0 when there are too few points, or too little arc length between
+     * them, to define a curvature at all.
      */
     fun tangentsAndCurvatures(points: List<RawPoint>): List<Pair<Float, Float>> {
         if (points.size < 2) return points.map { 0f to 0f }
@@ -168,7 +188,9 @@ object StrokePreprocessor {
 
         val curvatures = MutableList(points.size) { 0f }
         for (i in 1 until points.size - 1) {
-            curvatures[i] = wrapAngle(tangents[i + 1] - tangents[i - 1])
+            val deltaTheta = wrapAngle(tangents[i + 1] - tangents[i - 1])
+            val arcLength = (points[i] - points[i - 1]).length() + (points[i + 1] - points[i]).length()
+            curvatures[i] = if (arcLength > LENGTH_EPSILON) deltaTheta / arcLength else 0f
         }
         curvatures[0] = curvatures[1]
         curvatures[points.size - 1] = curvatures[points.size - 2]

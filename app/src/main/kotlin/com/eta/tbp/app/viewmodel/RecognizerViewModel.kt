@@ -12,6 +12,7 @@ import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
+import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
 import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.TouchSensorModule
 
@@ -53,6 +54,10 @@ class RecognizerViewModel : ViewModel() {
 
     /** Primitives Tier 1 has segmented so far this episode — [CharacterGraphLM.currentNodes], for the LM-state overlay. */
     var currentPrimitives by mutableStateOf<List<GraphNode>>(emptyList())
+        private set
+
+    /** Same primitives as [currentPrimitives], as on-canvas bounding boxes — [MontyOrchestrator.currentPrimitiveOverlays], for the canvas overlay. */
+    var primitiveOverlays by mutableStateOf<List<PrimitiveOverlay>>(emptyList())
         private set
 
     /** Every learned graph, by label — [GraphMemory.snapshot], for the LM-state overlay. */
@@ -121,6 +126,7 @@ class RecognizerViewModel : ViewModel() {
     private fun refreshLmState() {
         evidence = tier2.evidenceSnapshot()
         currentPrimitives = tier2.currentNodes()
+        primitiveOverlays = orchestrator.currentPrimitiveOverlays()
         learnedGraphs = memory.snapshot()
     }
 }

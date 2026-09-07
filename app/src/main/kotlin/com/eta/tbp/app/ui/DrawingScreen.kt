@@ -31,6 +31,7 @@ fun DrawingScreen(
                 strokes = viewModel.strokes,
                 onStrokeCompleted = viewModel::onStrokeCompleted,
                 enabled = viewModel.result == null,
+                primitiveOverlays = if (viewModel.showLmState) viewModel.primitiveOverlays else emptyList(),
                 modifier = Modifier.fillMaxSize(),
             )
             Column(

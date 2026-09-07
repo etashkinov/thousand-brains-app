@@ -205,7 +205,7 @@ app/                         # Android application module, depends on :lib
     viewmodel/
       RecognizerViewModel.kt  # owns the MontyOrchestrator, exposes Compose state
     ui/
-      DrawingCanvas.kt        # MotionEvent capture + live stroke rendering
+      DrawingCanvas.kt        # MotionEvent capture + live stroke rendering; debug boxes around detected primitives when LM state is shown
       DrawingScreen.kt        # composes canvas, evidence bars, toolbar/result panel
       DrawingToolbar.kt       # undo/clear/done
       EvidenceBars.kt         # live per-label match evidence

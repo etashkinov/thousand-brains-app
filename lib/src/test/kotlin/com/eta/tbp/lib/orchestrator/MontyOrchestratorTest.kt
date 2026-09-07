@@ -3,6 +3,7 @@ package com.eta.tbp.lib.orchestrator
 import com.eta.tbp.lib.lm.CharacterGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.TouchSensorModule
@@ -70,6 +71,33 @@ class MontyOrchestratorTest {
         result as RecognitionResult.Recognized
         assertEquals("L", result.label)
         assertTrue("expected a strong match but was ${result.confidence}", result.confidence > 0.9f)
+    }
+
+    @Test
+    fun `a taught corner shape is not confused with an unrelated arc through the real orchestrator`() {
+        // Regression test for a curvature-scale bug specific to the
+        // orchestrator: buildNormalizedObservations() used to compute
+        // curvature on each stroke's pre-normalization points as an
+        // optimization that was valid for a bare turning-angle curvature
+        // (rotation/scale-invariant) but silently wrong once curvature
+        // became real, length-normalized differential curvature (which
+        // scales inversely with whatever coordinate space it's measured
+        // in). lShape() drawn at its small raw pixel scale measured a
+        // corner curvature roughly 13x smaller than it should have in the
+        // shared normalized space, so PrimitiveSensorModule's sharp-corner
+        // veto never tripped -- "L" got taught as [ARC, LINE] instead of
+        // [LINE, LINE], and a completely unrelated arcShape() (one ARC
+        // node) then spuriously matched "L"'s corrupted ARC node instead of
+        // scoring Unknown. This only reproduces through the real
+        // orchestrator (not by driving PrimitiveSensorModule directly),
+        // since it's specifically about which coordinate space curvature
+        // gets computed in during buildNormalizedObservations().
+        val orchestrator = newOrchestrator()
+        teachCharacter(orchestrator, listOf(lineShape()), "line")
+        teachCharacter(orchestrator, listOf(lShape()), "L")
+
+        val result = recognize(orchestrator, listOf(arcShape()))
+        assertEquals(RecognitionResult.Unknown, result)
     }
 
     @Test
@@ -162,5 +190,37 @@ class MontyOrchestratorTest {
         val ambiguous = recognize(orchestrator, listOf(freshL))
         assertTrue("expected Ambiguous but was $ambiguous", ambiguous is RecognitionResult.Ambiguous)
         assertEquals(setOf("L", "L2"), (ambiguous as RecognitionResult.Ambiguous).labels.toSet())
+    }
+
+    @Test
+    fun `currentPrimitiveOverlays reports a bounding box in raw touch coordinates, not normalized space`() {
+        // lineShape() runs from (0,0) to (29,29) in raw touch pixels -- the
+        // overlay's bounds should track that original coordinate space
+        // directly (mapped back through the same resample+smooth points
+        // used before normalization), not the [-1, 1]-ish normalized space
+        // GraphNode.location lives in.
+        val orchestrator = newOrchestrator()
+        orchestrator.beginCharacter()
+        orchestrator.stepStroke(lineShape())
+
+        val overlays = orchestrator.currentPrimitiveOverlays()
+        assertEquals(1, overlays.size)
+        val overlay = overlays.single()
+        assertTrue("expected a Line measurement but was ${overlay.measurement}", overlay.measurement is PrimitiveMeasurement.Line)
+        assertEquals(0f, overlay.topLeft.x, 1f)
+        assertEquals(0f, overlay.topLeft.y, 1f)
+        assertEquals(29f, overlay.bottomRight.x, 1f)
+        assertEquals(29f, overlay.bottomRight.y, 1f)
+    }
+
+    @Test
+    fun `currentPrimitiveOverlays has one entry per detected primitive and clears with the character`() {
+        val orchestrator = newOrchestrator()
+        orchestrator.beginCharacter()
+        orchestrator.stepStroke(lShape())
+        assertEquals(2, orchestrator.currentPrimitiveOverlays().size)
+
+        orchestrator.clearCharacter()
+        assertTrue(orchestrator.currentPrimitiveOverlays().isEmpty())
     }
 }
