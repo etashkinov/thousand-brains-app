@@ -1,6 +1,6 @@
 # Implementation Plan — TBP-Inspired Handwriting Recognition App
 
-**Platform:** Android (Kotlin) · **Status:** Phases 0–4 done. Tier 1 was
+**Platform:** Android (Kotlin) · **Status:** Phases 0–5 done. Tier 1 was
 **redesigned** after Phase 4 (see §7's final entry): `PrimitiveSensorModule`,
 a hand-coded line/arc geometric classifier, was recalibrated five times
 chasing real hand-drawn failures and never converged — replaced with
@@ -10,9 +10,12 @@ vocabulary), plus `StrokeSegmenter`, a global dynamic-programming
 segmentation search over a whole stroke, replacing the old per-point local
 threshold decision. `lib`'s brain pipeline (sensor, both LM tiers,
 orchestrator) is rebuilt and tested end to end against the concrete
-real-drawing failures that motivated it; `app`'s teach/recognize UI loop
-still targets the *old* Tier 1 and has not been rewired to teach primitives
-yet — that (plus the usual real-handwriting merge/spawn tuning) is next.
+real-drawing failures that motivated it. **Phase 5** (the teach-primitives
+UI, §7's latest entry) is now built: `app` has a primitives/characters mode
+switch, with character-teaching gated behind having taught at least one
+primitive — the app is end-to-end functional for a real user for the first
+time. Real-handwriting merge/spawn and segmentation-constant tuning against
+that new UI (not just the earlier synthetic repro cases) is next.
 **Core idea:** A two-tier, Thousand-Brains-Project-inspired recognizer that learns
 handwritten characters live from touchscreen strokes, with no pretraining —
 architecture ported as faithfully as possible from Monty's actual CMP message
@@ -1524,7 +1527,8 @@ deliberately small.
     not a broad sweep of real handwriting — expect further calibration
     once real primitives are taught and real characters are drawn, the
     same iterative process every other constant in this file's history
-    went through.
+    went through. (Resolved by Phase 5's teach-primitives UI, below —
+    the calibration itself is still open.)
 - **Why aren't `PrimitiveGraphLM` and `CharacterGraphLM` one shared
   `EvidenceGraphLM`, the way real Monty reuses one `EvidenceGraphLM` class
   at every hierarchy level?** A fair question once both tiers exist as
@@ -1577,3 +1581,96 @@ deliberately small.
     `AlignmentSearch`'s own extraction (above) already established. Pure
     internal refactor: all 76 `lib` tests passed unchanged, no test file
     needed a single edit.
+- **Phase 5: the teach-primitives UI, closing the gap flagged above.**
+  `RecognizerViewModel` gains a `TeachMode` (`PRIMITIVES`/`CHARACTERS`,
+  defaulting to `PRIMITIVES`) and reads/writes `PrimitiveGraphLM` directly
+  — deliberately *not* through `MontyOrchestrator`, whose whole reason to
+  exist (coordinating segmentation search during a character episode) has
+  nothing to do with teaching one primitive in isolation, and whose own
+  `teach(label)` is hard-wired to the character tier only.
+  - **A primitive is one completed stroke, not a UI convenience but a
+    `lib` constraint**: `PrimitiveGraphLM.resample()` derives a single
+    orientation reference from the very first tangent over a flat
+    `List<RawPoint>` with no stroke-boundary concept at all — a pen-lift
+    discontinuity mid-window would fabricate a bogus segment spanning the
+    gap and corrupt the whole canonicalization, not just the seam.
+    Documented directly on `PrimitiveGraphLM.evaluate`/`teach`'s KDoc so
+    this is a stated non-goal, not a silently-discovered one; multi-stroke
+    primitives would need their own per-stroke normalization, mirroring
+    `MontyOrchestrator.buildNormalizedObservations`'s pattern.
+  - **Flow mirrors the character mode's existing lock/review split** at
+    stroke granularity instead of character granularity: draw one stroke
+    → canvas locks → `primitiveGraphLM.evaluate(...)` runs once and its
+    evidence is shown via the *same* `EvidenceBars` composable characters
+    already used (fully generic despite its doc comment, needed zero
+    changes) → a label field + "Teach"/"Redo" appear
+    (`PrimitiveTeachingPanel`, a new file, deliberately not sharing a
+    sub-composable with `RecognitionResultPanel` — the two diverge
+    immediately once "Redo" and the lack of any recognize/confirm/correct
+    branching are accounted for) → teaching immediately unlocks the canvas
+    for the next example, no separate "Next" click needed, since there's
+    no result to review at this tier, only evidence-as-hint and teach.
+  - **"Live evidence" means what it already means elsewhere in this app**:
+    recomputed once per completed stroke (matching `EvidenceBars`'/
+    `refreshLmState()`'s existing granularity for characters), not
+    continuously per motion event — nothing else in the app updates live
+    at that finer grain, and `DrawingCanvas`'s in-progress stroke state is
+    private to that composable, not hoisted anywhere a live-evidence
+    computation could reach it mid-stroke.
+  - **A defense-in-depth guard, not just a disabled button**:
+    `onStrokeCompleted` now also refuses to start a character episode
+    while `taughtPrimitiveLabels` is empty. Without it, nothing stops
+    `MontyOrchestrator` from happily running anyway — every primitive
+    would just degrade to its already-existing `UNTAUGHT_LABEL =
+    "unknown"` — but a character *taught* on top of that would
+    permanently poison `GraphMemory` with a model built entirely from
+    `"unknown"` nodes, not a crash but a silent, hard-to-diagnose dead end.
+    The guard lives in `RecognizerViewModel`, not `lib`:
+    `CharacterGraphLM`/`MontyOrchestrator` are correctly ignorant of
+    "primitive curriculum state" as a concept.
+  - **Mode switch uses two plain `Button`/`OutlinedButton`s**, not
+    Material3's segmented-button component — every other control in this
+    app already uses plain buttons, and introducing a new visual idiom for
+    what's functionally one binary toggle wasn't worth it.
+  - **Deliberately deferred, not forgotten**: no delete/review UI for
+    individual taught primitive examples — `PrimitiveGraphLM.teach()`
+    never merges (every example kept forever, by design) and `evaluate()`
+    takes a `max` over each label's examples, so one bad example can only
+    help-or-be-neutral for its own label but can hurt discrimination
+    against others, with no way today to see or undo it. `LmStateOverlay`
+    gained a "Taught primitives (Tier 1)" line (label/count only) for
+    partial visibility; a real per-example inspector is Phase 7's
+    "debug/inspector screen listing learned labels, viewable/deletable
+    variants," not new scope invented here.
+  - Design was stress-tested by a review pass before implementation (same
+    practice as the two entries above) — it confirmed the single-stroke
+    constraint is real (not a scoping choice), confirmed direct
+    ViewModel→`PrimitiveGraphLM` access is the right layering, and pushed
+    back specifically on introducing `SegmentedButtonRow` as an
+    unnecessary new visual idiom.
+  - Verified via `./gradlew :lib:test :lib:ktlintCheck :app:ktlintCheck
+    :app:assembleDebug` — all 76 `lib` tests still pass (only a KDoc line
+    touched `lib`), both modules' ktlint clean, `app` compiles and
+    assembles. No adb/device testing performed (standing project rule);
+    on-device verification of the new flow is the user's to do.
+  - **Follow-up**: primitive teaching gained the same recognize/confirm/
+    correct/disambiguate flow characters already had, instead of always
+    prompting for a blank label. `RecognitionResult` (and the
+    percent-of-max thresholding that builds one from an evidence map) was
+    pulled out of `CharacterGraphLM.kt` into its own file,
+    `lib/.../lm/RecognitionResult.kt`, as two pure top-level functions
+    (`possibleMatches(evidence, threshold)`, `recognitionResult(evidence,
+    threshold)`) operating on any `Map<String, Float>` — there was nothing
+    character-specific in that type or logic to begin with, just historical
+    proximity to where it was first needed.
+    `RecognizerViewModel.onPrimitiveStrokeCompleted` now calls
+    `recognitionResult(primitiveEvidence)` the same way `CharacterGraphLM`
+    calls it on its own `evidenceSnapshot()`, and `PrimitiveTeachingPanel`
+    grew the same three-way branching `RecognitionResultPanel` already had
+    — plus a "Redo" button on every branch, since a primitive is one cheap
+    stroke to redraw where a completed character (once "Done" is pressed)
+    has no equivalent discard-and-retry path. Also: the on-canvas primitive
+    overlay in character mode no longer requires the LM-state debug panel
+    to be expanded — it was gated behind `showLmState` for no real reason
+    (the overlay is meant for the user teaching characters, not just for
+    debugging) and now always renders.

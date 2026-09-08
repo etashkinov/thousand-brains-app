@@ -88,6 +88,16 @@ class PrimitiveGraphLM {
      * nothing's been taught yet. The best label/score pair here is exactly
      * what [com.eta.tbp.lib.orchestrator.StrokeSegmenter] uses to score a
      * candidate window during segmentation search.
+     *
+     * [points] must be one continuous stroke, not several concatenated
+     * ones: [resample]'s orientation-canonicalization derives a single
+     * rotation from the very first tangent, so a pen-lift discontinuity in
+     * the middle would fabricate a bogus segment spanning the gap and
+     * corrupt that canonicalization for the whole window, not just the
+     * seam. Multi-stroke primitives aren't supported by this class today —
+     * they'd need their own per-stroke normalization, mirroring
+     * [com.eta.tbp.lib.orchestrator.MontyOrchestrator.buildNormalizedObservations]'s
+     * pattern at the character tier.
      */
     fun evaluate(points: List<RawPoint>): Map<String, Float> {
         val window = resample(points)
@@ -96,7 +106,7 @@ class PrimitiveGraphLM {
         }
     }
 
-    /** Stores [points] (the example just drawn) as a new template variant for [label]. */
+    /** Stores [points] (the example just drawn — one continuous stroke, see [evaluate]) as a new template variant for [label]. */
     fun teach(
         label: String,
         points: List<RawPoint>,

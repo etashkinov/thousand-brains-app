@@ -201,6 +201,7 @@ lib/                        # Kotlin/JVM module — NO Android SDK dependency
       LearningModule.kt       # shared interface: matchingStep/receiveVotes/sendOutVote/getOutput
       PrimitiveGraphLM.kt     # Tier 1: taught, evidence-matched primitive recognizer (no fixed shape vocabulary)
       CharacterGraphLM.kt     # Tier 2: evidenceSnapshot(), possibleMatches(), teach()
+      RecognitionResult.kt    # the three-way UI outcome + possibleMatches()/recognitionResult(evidence), shared by both tiers
     orchestrator/
       StrokeSegmenter.kt      # generic global DP segmentation search (Viterbi-style)
       MontyOrchestrator.kt    # runs StrokeSegmenter per stroke, scored by PrimitiveGraphLM, feeds CharacterGraphLM
@@ -220,14 +221,15 @@ app/                         # Android application module, depends on :lib
     sensor/
       TouchObservationAdapter.kt  # Offset -> RawPoint mapping (thin, no recognition logic)
     viewmodel/
-      RecognizerViewModel.kt  # owns the MontyOrchestrator, exposes Compose state
+      RecognizerViewModel.kt  # owns the MontyOrchestrator + PrimitiveGraphLM, exposes Compose state, TeachMode gate
     ui/
-      DrawingCanvas.kt        # MotionEvent capture + live stroke rendering; debug boxes around detected primitives when LM state is shown
-      DrawingScreen.kt        # composes canvas, evidence bars, toolbar/result panel
-      DrawingToolbar.kt       # undo/clear/done
-      EvidenceBars.kt         # live per-label match evidence
-      RecognitionResultPanel.kt # teach/confirm-correct/disambiguate, driven by RecognitionResult
-      LmStateOverlay.kt       # debug overlay: primitives this episode + graphs learned
+      DrawingCanvas.kt        # MotionEvent capture + live stroke rendering; always-on boxes around detected primitives (character mode)
+      DrawingScreen.kt        # mode switch (Primitives/Characters) + composes canvas, evidence bars, toolbar/result panel
+      DrawingToolbar.kt       # undo/clear/done (character mode)
+      EvidenceBars.kt         # live per-label match evidence (both tiers)
+      RecognitionResultPanel.kt # teach/confirm-correct/disambiguate, driven by RecognitionResult (character mode)
+      PrimitiveTeachingPanel.kt # label + teach/redo (primitive mode)
+      LmStateOverlay.kt       # debug overlay: taught primitives, primitives this episode, graphs learned
     MainActivity.kt
   src/androidTest/.../        # adapter + Compose UI smoke tests only
 
@@ -257,12 +259,20 @@ evidence-matched primitive recognizer, structurally parallel to
 `CharacterGraphLM`) plus `StrokeSegmenter` (a global dynamic-programming
 search over each whole stroke). `lib`'s test suite (76 unit tests) passes
 against this new design, including regression tests for the specific real
-hand-drawn shapes that motivated it. **`app`'s teach/recognize UI has not
-been rewired for this yet** — there's no "teach primitives" screen, so a
-fresh `PrimitiveGraphLM` starts (and stays) empty and the app isn't
-end-to-end functional for a real user until that UI exists. **Phase 5**
-(building that UI, plus primitive/segmentation constant tuning against real
-handwriting) is next.
+hand-drawn shapes that motivated it.
+
+**Phase 5 is now done too**: `app` has a Primitives/Characters mode
+switch (`RecognizerViewModel`'s `TeachMode`) — draw a primitive, see live
+evidence against everything already taught, and label it; character
+teaching is gated behind having taught at least one primitive first, the
+"shapes before letters" curriculum this app's whole design has been
+building toward. The app is end-to-end functional for a real user for the
+first time. What's left: real-handwriting calibration of the segmentation
+constants (`MIN_WINDOW_LENGTH`/`SEGMENT_PENALTY`) against that new UI,
+persisted state across runs (Phase 7), and a real per-example inspector
+for taught primitives (today's `LmStateOverlay` shows label/count only —
+`PrimitiveGraphLM` never merges near-duplicate taught examples, so there's
+no way yet to see or delete an individual bad one).
 
 ---
 
@@ -277,9 +287,16 @@ handwriting) is next.
   `IMPLEMENTATION_PLAN.md` §7): an earlier draft considered a geometric-fit
   fallback for unmatched windows, dropped because it would quietly become
   the dominant path whenever evidence is close, reintroducing exactly the
-  brittle hand-coded classification this redesign replaced. The practical
-  consequence today: `app` has no "teach primitives" UI yet, so nothing can
-  be recognized end-to-end through the app until that's built (Phase 5).
+  brittle hand-coded classification this redesign replaced. `app`'s
+  Phase 5 UI enforces this at the curriculum level too — character
+  teaching is disabled until at least one primitive has been taught.
+- **No delete/review of individual taught primitive examples.**
+  `PrimitiveGraphLM.teach()` never merges — every drawn example is kept
+  forever — and matching takes the best (`max`) score across a label's
+  examples, so one bad example can only help or be neutral for its own
+  label but can hurt discrimination against others, with no way today to
+  see or undo it. `LmStateOverlay` shows taught labels and counts, not
+  individual examples; a real inspector is Phase 7's job.
 - **No general compositional part-swapping.** Real hierarchical composition
   (recognizing a novel combination of familiar parts) is flagged as immature
   even in Monty's own published work; this app's multi-variant-per-label

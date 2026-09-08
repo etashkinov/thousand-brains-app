@@ -9,6 +9,7 @@ import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.lm.recognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
@@ -28,12 +29,17 @@ import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
  * style — just with the state hoisted to a configuration-change-surviving
  * owner instead of a `Composable`'s own memory.
  *
- * TODO(Phase 5 UI): [primitiveGraphLM] has no taught primitives yet and
- * nothing in this ViewModel exposes a way to teach one — until a
- * "teach primitives" screen exists, every character drawn here segments
- * against an empty [PrimitiveGraphLM] and never confidently recognizes
- * anything. This class already wires the new two-tier pipeline correctly;
- * it just isn't feedable from the UI yet.
+ * [TeachMode.PRIMITIVES] is Tier 1 teaching, wired directly against
+ * [primitiveGraphLM] rather than through [orchestrator] — the orchestrator
+ * exists to coordinate segmentation search during a character episode,
+ * which teaching one primitive in isolation has nothing to do with; its
+ * own [MontyOrchestrator.teach] is hard-wired to the character tier only.
+ * [TeachMode.CHARACTERS] is gated behind [taughtPrimitiveLabels] being
+ * non-empty — the "shapes before letters" curriculum, enforced both in the
+ * UI (the mode switch) and here (see [onStrokeCompleted]'s guard) since a
+ * character taught before any primitive exists would build a
+ * [com.eta.tbp.lib.memory.GraphObjectModel] out of nothing but
+ * `"unknown"`-labeled nodes, permanently poisoning [memory].
  */
 class RecognizerViewModel : ViewModel() {
     private val memory = GraphMemory()
@@ -73,8 +79,69 @@ class RecognizerViewModel : ViewModel() {
     var showLmState by mutableStateOf(false)
         private set
 
+    /** Which teaching mode is active. Defaults to primitives — nothing can be recognized until at least one exists. */
+    var mode by mutableStateOf(TeachMode.PRIMITIVES)
+        private set
+
+    /** The candidate primitive drawn so far this round; null while nothing's drawn yet. */
+    var primitiveStroke by mutableStateOf<List<Offset>?>(null)
+        private set
+
+    /** [primitiveStroke]'s evidence against every already-taught label — computed once the stroke completes. */
+    var primitiveEvidence by mutableStateOf<Map<String, Float>>(emptyMap())
+        private set
+
+    /** [primitiveEvidence] reduced to the same three-way decision [result] uses for characters — null while nothing's drawn yet. */
+    var primitiveResult by mutableStateOf<RecognitionResult?>(null)
+        private set
+
+    /** Set once a primitive's been taught this round; cleared by the next stroke. */
+    var taughtPrimitiveLabel by mutableStateOf<String?>(null)
+        private set
+
+    /** Every primitive label taught so far — gates [TeachMode.CHARACTERS] and shown in the LM-state overlay. */
+    var taughtPrimitiveLabels by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    fun onSelectMode(newMode: TeachMode) {
+        if (newMode == TeachMode.CHARACTERS && taughtPrimitiveLabels.isEmpty()) return
+        mode = newMode
+    }
+
+    fun onPrimitiveStrokeCompleted(points: List<Offset>) {
+        if (primitiveStroke != null) return
+        primitiveStroke = points
+        primitiveEvidence = primitiveGraphLM.evaluate(points.toRawPoints())
+        primitiveResult = recognitionResult(primitiveEvidence)
+        taughtPrimitiveLabel = null
+    }
+
+    fun onPrimitiveRedo() {
+        primitiveStroke = null
+        primitiveEvidence = emptyMap()
+        primitiveResult = null
+    }
+
+    fun onTeachPrimitive(label: String) {
+        val stroke = primitiveStroke ?: return
+        if (label.isBlank()) return
+        primitiveGraphLM.teach(label, stroke.toRawPoints())
+        taughtPrimitiveLabel = label
+        primitiveStroke = null
+        primitiveEvidence = emptyMap()
+        primitiveResult = null
+        refreshLmState() // also updates taughtPrimitiveLabels
+    }
+
+    fun onConfirmPrimitive() {
+        val recognized = primitiveResult as? RecognitionResult.Recognized ?: return
+        onTeachPrimitive(recognized.label)
+    }
+
+    fun onCorrectPrimitive(label: String) = onTeachPrimitive(label)
+
     fun onStrokeCompleted(points: List<Offset>) {
-        if (result != null) return
+        if (result != null || taughtPrimitiveLabels.isEmpty()) return
         orchestrator.stepStroke(points.toRawPoints())
         strokes = strokes + listOf(points)
         refreshLmState()
@@ -133,5 +200,9 @@ class RecognizerViewModel : ViewModel() {
         currentPrimitives = tier2.currentNodes()
         primitiveOverlays = orchestrator.currentPrimitiveOverlays()
         learnedGraphs = memory.snapshot()
+        taughtPrimitiveLabels = primitiveGraphLM.allLabels()
     }
 }
+
+/** Which tier is currently being taught — see the class doc for the "shapes before letters" gate this drives. */
+enum class TeachMode { PRIMITIVES, CHARACTERS }

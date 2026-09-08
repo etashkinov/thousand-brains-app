@@ -130,35 +130,11 @@ class CharacterGraphLM(
         memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes), exemplarCount = 1), label)
     }
 
-    /**
-     * Labels within [xPercentThreshold]% of the max evidence — a simplified
-     * port of Monty's `get_possible_matches()`/`_threshold_possible_matches()`
-     * (`evidence_matching/learning_module.py`): straight percent-of-max
-     * thresholding, dropping Monty's own mean/std branching and its
-     * `len(graph_memory) == 1` special case (not needed at this evidence
-     * scale — same simplification spirit as [GraphMemory.detectNewObject]
-     * vs. Monty's k-steps/exponential version). Strict `>` matches Monty's
-     * own `ge > th` exactly. 0 results means no match (Monty's "no_match"
-     * terminal state), 1 a confident recognition, 2+ a genuine tie.
-     */
-    fun possibleMatches(xPercentThreshold: Float = 10f): List<String> {
-        val evidence = evidenceSnapshot()
-        if (evidence.isEmpty()) return emptyList()
-        val maxEvidence = evidence.values.max()
-        val threshold = if (maxEvidence > 0f) maxEvidence - (maxEvidence * xPercentThreshold / 100f) else 0f
-        return evidence.filter { it.value > threshold }.keys.toList()
-    }
+    /** Labels within [xPercentThreshold]% of the max evidence — see the top-level [possibleMatches] this delegates to. */
+    fun possibleMatches(xPercentThreshold: Float = 10f): List<String> = possibleMatches(evidenceSnapshot(), xPercentThreshold)
 
-    /** Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI decision. */
-    fun recognitionResult(): RecognitionResult {
-        val matches = possibleMatches()
-        val evidence = evidenceSnapshot()
-        return when (matches.size) {
-            0 -> RecognitionResult.Unknown
-            1 -> RecognitionResult.Recognized(matches.single(), evidence.getValue(matches.single()))
-            else -> RecognitionResult.Ambiguous(matches, evidence)
-        }
-    }
+    /** Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI decision — see the top-level [recognitionResult]. */
+    fun recognitionResult(): RecognitionResult = recognitionResult(evidenceSnapshot())
 
     private fun toGraphNode(message: CmpMessage): GraphNode {
         val features = message.nonMorphologicalFeatures
@@ -184,26 +160,4 @@ class CharacterGraphLM(
             measurement = features.measurement,
         )
     }
-}
-
-/**
- * The three-way outcome the teach/recognize UI branches on. Mirrors
- * Monty's own `possible_matches`-driven terminal states
- * (`evidence_matching/learning_module.py`), not an app-invented concept:
- * zero possible matches is Monty's own "no_match" terminal state, one is a
- * normal convergence, and 2+ is Monty's own multi-hypothesis case — this
- * app surfaces that last case as a question instead of forcing a guess.
- */
-sealed class RecognitionResult {
-    object Unknown : RecognitionResult()
-
-    data class Recognized(
-        val label: String,
-        val confidence: Float,
-    ) : RecognitionResult()
-
-    data class Ambiguous(
-        val labels: List<String>,
-        val evidence: Map<String, Float>,
-    ) : RecognitionResult()
 }

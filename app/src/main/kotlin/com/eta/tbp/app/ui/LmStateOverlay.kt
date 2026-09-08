@@ -40,11 +40,15 @@ fun LmStateToggleButton(
  *
  * @param currentPrimitives Tier 1's output for the episode so far, in order.
  * @param learnedGraphs every taught label's learned [GraphObjectModel] variants.
+ * @param taughtPrimitiveLabels every label [com.eta.tbp.lib.lm.PrimitiveGraphLM]
+ *   has been taught — label/count visibility only, not individual taught
+ *   examples (see IMPLEMENTATION_PLAN.md's Phase 7 for a real inspector).
  */
 @Composable
 fun LmStateOverlay(
     currentPrimitives: List<GraphNode>,
     learnedGraphs: Map<String, List<GraphObjectModel>>,
+    taughtPrimitiveLabels: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -60,6 +64,13 @@ fun LmStateOverlay(
                     .verticalScroll(rememberScrollState()),
         ) {
             Text("LM state", style = MaterialTheme.typography.titleSmall)
+
+            Spacer(Modifier.heightIn(min = 8.dp))
+            Text("Taught primitives (Tier 1)", style = MaterialTheme.typography.labelMedium)
+            Text(
+                if (taughtPrimitiveLabels.isEmpty()) "(none yet)" else taughtPrimitiveLabels.joinToString(", "),
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             Spacer(Modifier.heightIn(min = 8.dp))
             Text("Primitives this episode (Tier 1)", style = MaterialTheme.typography.labelMedium)
