@@ -153,9 +153,11 @@ object StrokePreprocessor {
      * fixed 48-point-per-stroke budget with a second primitive in the same
      * stroke) reports roughly double the per-step turning angle of the same
      * semicircle resampled to 48 points alone, purely from having half as
-     * many steps to cover the same 180° turn. [PrimitiveSensorModule]'s
-     * sharp-corner veto (`MAX_LOCAL_TURN`) compares this value against a
-     * fixed threshold meant to catch genuine corners, not resample density —
+     * many steps to cover the same 180° turn. The original, since-deleted
+     * `PrimitiveSensorModule`'s sharp-corner veto (`MAX_LOCAL_TURN`) —
+     * a different class from the current [PrimitiveSensorModule] — compared
+     * this value against a fixed threshold meant to catch genuine corners,
+     * not resample density —
      * dividing by arc length is what makes a smooth arc read as smoothly
      * curved regardless of how many strokes/primitives share its character's
      * resample budget, instead of spuriously tripping the corner veto and

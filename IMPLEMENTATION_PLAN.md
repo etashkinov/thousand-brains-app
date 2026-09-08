@@ -1762,3 +1762,54 @@ deliberately small.
     part of this fix. No adb/device testing performed (standing project
     rule); confirming the freeze is actually gone on a real device is the
     user's to do.
+- **`SensorModule<T>` had drifted to zero implementations.** The Phase-4
+  redesign (this section's entry above, "The redesign") deleted the
+  original `PrimitiveSensorModule` outright and never reinstated anything
+  behind the interface: `MontyOrchestrator` itself grew the resample/
+  normalize/segment/emit-`CmpMessage` logic inline (`windowScore()`,
+  `emitPrimitive()`), and `PrimitiveGraphLM` was queried directly by both
+  `MontyOrchestrator` and `RecognizerViewModel`. Real Monty never does this
+  — confirmed by reading `frameworks/models/two_d_sensor_module.py`:
+  `TwoDSensorModule` stays a concrete `SensorModule` subclass even though
+  its own feature extraction (edge detection, surface-normal fitting) also
+  needs more than one raw sample, the same situation this app's primitive
+  segmentation is in. Needing whole-stroke context turned out not to be a
+  real reason to abandon the interface.
+  - **Fix**: reinstated a concrete `PrimitiveSensorModule : SensorModule
+    <RawTouchObservation>` (`lib/.../sensor/PrimitiveSensorModule.kt`) —
+    a different class from the original, since-deleted one of the same
+    name, wrapping `PrimitiveGraphLM` rather than a hand-coded classifier.
+    `step()` buffers each observation and returns a `passMessage = false`
+    placeholder (a segmentation decision genuinely can't be made
+    per-point); `flushStroke()` — this class's one deliberate addition
+    beyond the plain interface, same spirit as the original class's
+    `drainTrailingPrimitive()` — runs `StrokeSegmenter`'s search once a
+    whole stroke's observations have all been stepped, and drains the
+    resulting primitives as a batch of `CmpMessage`s.
+    `MontyOrchestrator.replay()` now steps each stroke's observations
+    through it and calls `flushStroke()` at each stroke boundary, instead
+    of doing the segmentation/matching/message-construction work itself;
+    `windowScore()`/`emitPrimitive()`/their helpers moved to the new class
+    verbatim. `buildNormalizedObservations()` (the shared, whole-character
+    normalization) stayed in `MontyOrchestrator` — it's cross-stroke,
+    episode-scoped state, not this sensor's concern, and `PrimitiveGraphLM`
+    itself is unchanged (still deliberately not a `SensorModule` or
+    `LearningModule` — see its own class doc, updated to point at the new
+    `PrimitiveSensorModule` as its actual caller instead of
+    `MontyOrchestrator`).
+  - Doc comments elsewhere that referenced the *original* `PrimitiveSensorModule`
+    by its old behavior (`StrokePreprocessor`'s curvature note, `StrokeSegmenter`'s
+    class doc) were reworded to distinguish it from the current class of the
+    same name, since a bare `[PrimitiveSensorModule]` KDoc link now resolves
+    to the new one.
+  - New `PrimitiveSensorModuleTest.kt` covers the class's own `SensorModule`
+    contract directly (buffering in `step()`, batch draining in
+    `flushStroke()`, reset in `preEpisode()`); the segmentation/matching
+    *behavior* against real drawn shapes stays covered by the existing
+    `MontyOrchestratorTest`, unchanged and still passing (exercises this
+    class through the real orchestrator, no internal mocking needed).
+  - Verified via `./gradlew :lib:test :lib:ktlintCheck :app:ktlintCheck
+    :app:compileDebugKotlin` — all 12 `MontyOrchestratorTest` cases pass
+    unchanged (behavior parity), the new test class's 5 cases pass, both
+    modules' ktlint clean, `app` compiles. No adb/device testing performed
+    (standing project rule).

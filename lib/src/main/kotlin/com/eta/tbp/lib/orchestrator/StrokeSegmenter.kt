@@ -8,9 +8,11 @@ package com.eta.tbp.lib.orchestrator
  * model, applied here to segmenting a stroke into primitives scored by how
  * well each candidate window matches a taught shape.
  *
- * This replaces [com.eta.tbp.lib.sensor.PrimitiveSensorModule]'s local,
- * per-point hard-threshold segmentation (see IMPLEMENTATION_PLAN.md for the
- * full history of why that kept failing on real handwriting): instead of a
+ * This replaces the original, since-deleted `PrimitiveSensorModule`'s local,
+ * per-point hard-threshold segmentation — a different class from the
+ * current [com.eta.tbp.lib.sensor.PrimitiveSensorModule], which now calls
+ * into this object instead (see IMPLEMENTATION_PLAN.md for the full history
+ * of why the old approach kept failing on real handwriting): instead of a
  * single local yes/no decision at every point, the *whole* stroke's
  * segmentation is chosen at once to maximize total score. A wrong
  * segmentation that ends up matching nothing scores no better than a

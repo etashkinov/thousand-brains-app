@@ -9,14 +9,17 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Tier 1: a taught, evidence-matched primitive recognizer — replaces
- * [com.eta.tbp.lib.sensor.PrimitiveSensorModule]'s hand-coded line/arc
- * geometric fit tests, which were recalibrated five times chasing real
- * hand-drawn failures and never converged (see IMPLEMENTATION_PLAN.md §7).
- * The user teaches primitive shapes — a line, an arc, a loop, whatever
- * labels naturally arise — by drawing an example and labeling it, exactly
- * the way [CharacterGraphLM] is taught characters. There is no fixed,
- * hand-designed shape vocabulary anywhere in this class.
+ * Tier 1: a taught, evidence-matched primitive recognizer — replaces the
+ * original `PrimitiveSensorModule`'s hand-coded line/arc geometric fit
+ * tests (a since-deleted class; the current
+ * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] is a different, later
+ * class that *wraps* this one rather than being replaced by it — see below),
+ * which were recalibrated five times chasing real hand-drawn failures and
+ * never converged (see IMPLEMENTATION_PLAN.md §7). The user teaches
+ * primitive shapes — a line, an arc, a loop, whatever labels naturally
+ * arise — by drawing an example and labeling it, exactly the way
+ * [CharacterGraphLM] is taught characters. There is no fixed, hand-designed
+ * shape vocabulary anywhere in this class.
  *
  * Given a candidate window (a short slice of a stroke, *proposed* by
  * [com.eta.tbp.lib.orchestrator.StrokeSegmenter]'s global search rather
@@ -55,12 +58,14 @@ import kotlin.math.sin
  * *winning* window's own un-normalized chord length, once segmentation
  * search has chosen it — not this class's concern.
  *
- * Deliberately not a [LearningModule]: there's no fixed per-observation
- * `CmpMessage` stream feeding this tier the way a real SM feeds an LM —
- * [com.eta.tbp.lib.orchestrator.MontyOrchestrator] queries it directly with
- * candidate windows during segmentation search, the same "direct
- * introspection query" spirit as [CharacterGraphLM.evidenceSnapshot]. It
- * still mirrors [CharacterGraphLM]'s teach-by-drawing contract in shape,
+ * Deliberately not a [LearningModule] and not itself a
+ * [com.eta.tbp.lib.sensor.SensorModule] either: there's no fixed
+ * per-observation `CmpMessage` stream feeding this class the way a real SM
+ * feeds an LM — [com.eta.tbp.lib.sensor.PrimitiveSensorModule] (the actual
+ * `SensorModule` for this tier) queries it directly with candidate windows
+ * during its internal segmentation search, the same "direct introspection
+ * query" spirit as [CharacterGraphLM.evidenceSnapshot]. It still mirrors
+ * [CharacterGraphLM]'s teach-by-drawing contract in shape,
  * just at a different granularity and — deliberately — not in exact
  * mechanism: [CharacterGraphLM.teach] labels whatever was *last completed*,
  * safe there because [CharacterGraphLM.matchingStep] is only ever called
