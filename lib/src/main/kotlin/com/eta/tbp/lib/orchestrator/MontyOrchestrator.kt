@@ -1,15 +1,22 @@
 package com.eta.tbp.lib.orchestrator
 
 import com.eta.tbp.lib.cmp.CmpMessage
+import com.eta.tbp.lib.cmp.MorphologicalFeatures
+import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.sensor.PrimitiveFeatures
 import com.eta.tbp.lib.sensor.PrimitiveMeasurement
-import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.RawTouchObservation
-import com.eta.tbp.lib.sensor.SensorModule
 import com.eta.tbp.lib.sensor.StrokePreprocessor
+import com.eta.tbp.lib.util.angleDifference
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * One detected primitive's on-screen extent, for a debug overlay drawn
@@ -29,19 +36,40 @@ data class PrimitiveOverlay(
 )
 
 /**
- * Mirrors real Monty's `MontyBase`/step loop, wiring a two-stage sensor
- * pipeline ([SensorModule] into [PrimitiveSensorModule]) into the one
- * [com.eta.tbp.lib.lm.LearningModule] in this app's hierarchy,
- * [CharacterGraphLM]. Lives in its own package rather than `lm` because it
- * isn't itself a `LearningModule` — the same relationship Monty's own
- * `monty_base.py` has to `sensor_modules.py`/`learning_module.py`.
+ * Mirrors real Monty's `MontyBase`/step loop, wiring [PrimitiveGraphLM]
+ * (Tier 1: a taught, evidence-matched primitive recognizer) and
+ * [CharacterGraphLM] (Tier 2, the character-level
+ * [com.eta.tbp.lib.lm.LearningModule]) together via a global segmentation
+ * search rather than a per-point streaming `SensorModule` chain.
  *
- * There's only one `LearningModule` here, not two: `PrimitiveSensorModule`
- * does rule-based feature extraction (line/arc fitting), which is
- * architecturally SM-shaped work in Monty's own terms, not LM-shaped work
- * — see its class doc and IMPLEMENTATION_PLAN.md §3.4/§4. A single-SM-
- * chained-into-another-SM, single-LM hierarchy like this one is Monty's
- * own ordinary baseline configuration, not a stripped-down special case.
+ * This replaced an earlier design chaining two `SensorModule`s
+ * (`TouchSensorModule` into `PrimitiveSensorModule`, a hand-coded
+ * line/arc geometric classifier) — deleted after five recalibrations on
+ * real handwriting failures never converged (see IMPLEMENTATION_PLAN.md
+ * §7). The actual problem was forcing every stroke window into a small,
+ * fixed, hand-designed shape vocabulary via a local, irreversible
+ * threshold decision — no single threshold can be right for the full
+ * continuum of real hand-drawn curvature. [PrimitiveGraphLM] replaces the
+ * *classifier* with a taught, evidence-matched one; [StrokeSegmenter]
+ * replaces the *local, irreversible* decision with a global one — for the
+ * whole stroke at once, scored by how well each candidate window matches
+ * something actually taught, exactly Monty's own "maintain multiple
+ * hypotheses, let evidence decide" principle, applied one level below
+ * character recognition instead of only at it.
+ *
+ * A consequence worth being explicit about: this segmentation search needs
+ * the *whole* stroke's points before it can decide anything (querying
+ * arbitrary, including never-chosen, candidate windows along the way) —
+ * it isn't a per-observation streaming step the way a real Monty
+ * `SensorModule.step()` is. `TouchSensorModule` (whose only job was
+ * wrapping a single point into a `CmpMessage` for the old per-point
+ * `PrimitiveSensorModule` chain) has no remaining consumer once that chain
+ * is gone, and was deleted alongside it rather than kept as an unused
+ * pass-through — this class now constructs each chosen primitive's
+ * `CmpMessage` directly, playing that role itself for exactly the
+ * messages that actually get produced. [CharacterGraphLM] still receives
+ * the same uniform `CmpMessage` stream it always did; only *how* those
+ * messages get produced changed.
  *
  * Episode boundary is one full character (however many strokes it takes),
  * uniform across the whole pipeline — see IMPLEMENTATION_PLAN.md §3.6 for
@@ -55,25 +83,28 @@ data class PrimitiveOverlay(
  * undone), there's no way to incrementally patch previously-computed
  * primitives — so [stepStroke]/[undoLastStroke]/[clearCharacter] all
  * recompute ([replay]) the whole character from scratch. Cheap at this
- * data scale (a handful of strokes, tens of points each per character).
+ * data scale (a handful of strokes, tens of points each per character) —
+ * segmentation search included, since [StrokeSegmenter]'s search space is
+ * bounded by point count, not by anything that grows with how many
+ * characters have been taught.
  */
 class MontyOrchestrator(
-    private val sensorModule: SensorModule<RawTouchObservation>,
-    private val primitiveSensor: PrimitiveSensorModule,
+    private val primitiveGraphLM: PrimitiveGraphLM,
     private val tier2: CharacterGraphLM,
 ) {
     private val strokePoints = mutableListOf<List<RawPoint>>()
     private val primitiveOverlays = mutableListOf<PrimitiveOverlay>()
+    private var previousExitAngle = 0f
 
     /**
      * Per-stroke points as they stood right before normalization (resampled
      * and smoothed, but still in the original touch-pixel coordinate
      * space), stashed by [buildNormalizedObservations] purely so
-     * [recordOverlay] can map a primitive's `startIndex`/`endIndex` back to
-     * an on-screen bounding box without inverting the normalization
-     * transform (translate-by-centroid, scale-by-bounding-radius) by hand.
-     * `orderInStroke` on every observation built from this is exactly its
-     * index here, so the mapping is exact, not approximate.
+     * [recordOverlay] can map a primitive's window back to an on-screen
+     * bounding box without inverting the normalization transform
+     * (translate-by-centroid, scale-by-bounding-radius) by hand. A
+     * primitive's window indices are exactly indices into this same array,
+     * so the mapping is exact, not approximate.
      */
     private var rawResampledPerStroke: List<List<RawPoint>> = emptyList()
 
@@ -126,38 +157,156 @@ class MontyOrchestrator(
 
     /**
      * Recomputes the whole character from scratch against every stroke in
-     * [strokePoints]. `primitiveSensor.preEpisode()`/`postEpisode()` fire
-     * on every replay — harmless since it's fully stateless across calls
-     * — so evidence stays live as strokes are added or removed.
+     * [strokePoints]. Each stroke's points are segmented *independently* —
+     * a pen lift between strokes is never bridged by a single primitive,
+     * the same invariant the old per-point chain enforced by force-breaking
+     * on a `strokeIndex` discontinuity. [previousExitAngle] deliberately
+     * keeps tracking across stroke boundaries (only the segmentation
+     * itself is per-stroke), so a primitive's turn-from-previous encoding
+     * stays meaningful across a pen lift within one character.
      * `tier2.postEpisode()` deliberately does NOT fire here: its only
      * consequential effect (snapshotting the completed graph for [teach])
      * is reserved for the true end of the character, in [endCharacter].
      */
     private fun replay() {
-        primitiveSensor.preEpisode()
         tier2.preEpisode()
         primitiveOverlays.clear()
-        for (observations in buildNormalizedObservations()) {
-            for (observation in observations) {
-                val touchMessage = sensorModule.step(observation)
-                val primitiveMessage = primitiveSensor.step(touchMessage)
-                recordOverlay(primitiveMessage)
-                tier2.matchingStep(listOf(primitiveMessage))
+        previousExitAngle = 0f
+
+        for ((strokeIndex, observations) in buildNormalizedObservations().withIndex()) {
+            if (observations.isEmpty()) continue
+
+            val windows =
+                StrokeSegmenter.segment(
+                    pointCount = observations.size,
+                    minWindowLength = MIN_WINDOW_LENGTH,
+                    maxWindowLength = MAX_WINDOW_LENGTH,
+                    segmentPenalty = SEGMENT_PENALTY,
+                ) { start, end -> windowScore(observations, start, end) }
+
+            for (window in windows) {
+                val message = emitPrimitive(observations, window.startIndex, window.endIndex, strokeIndex)
+                recordOverlay(message, strokeIndex)
+                tier2.matchingStep(listOf(message))
                 tier2.receiveVotes(emptyList()) // Phase 8: populated by sibling glide LMs
             }
         }
-        primitiveSensor.postEpisode()
-        primitiveSensor.drainTrailingPrimitive()?.let {
-            recordOverlay(it)
-            tier2.matchingStep(listOf(it))
-        }
     }
 
-    /** No-op for a "nothing new this step" message (see [PrimitiveSensorModule.step]'s doc) — most steps are exactly this. */
-    private fun recordOverlay(message: CmpMessage) {
-        if (!message.passMessage) return
+    /**
+     * The *log* of [PrimitiveGraphLM]'s best evidence for the candidate
+     * window `[start, end)` — not the raw evidence. This matters: raw
+     * evidence for a clean match against a taught line sits close to 1.0
+     * regardless of the window's length (any sub-segment of a straight
+     * line is itself a straight line), so summing raw evidence directly
+     * would make [StrokeSegmenter] always prefer more, shorter windows
+     * whenever each one *also* scores well — no [SEGMENT_PENALTY] can fix
+     * that on its own, since a small positive-per-window gain still always
+     * wins by using more of them. Log-evidence caps out at 0 for a perfect
+     * match, so covering the same span with more equally-good windows
+     * sums to *the same* total (not more) — exactly how a real language
+     * model's word segmentation naturally prefers fewer, better-fitting
+     * words without needing to be told to. [SEGMENT_PENALTY] only has to
+     * break near-ties toward fewer primitives after that, not fight a
+     * runaway sum. [MIN_EVIDENCE] avoids `ln(0)`.
+     */
+    private fun windowScore(
+        observations: List<RawTouchObservation>,
+        start: Int,
+        end: Int,
+    ): Float {
+        val windowPoints = windowRawPoints(observations, start, end)
+        val evidence = primitiveGraphLM.evaluate(windowPoints).values.maxOrNull() ?: MIN_EVIDENCE
+        return ln(evidence.coerceAtLeast(MIN_EVIDENCE))
+    }
+
+    private fun windowRawPoints(
+        observations: List<RawTouchObservation>,
+        start: Int,
+        end: Int,
+    ): List<RawPoint> = observations.subList(start, end).map { RawPoint(it.position[0], it.position[1]) }
+
+    /** Builds one chosen window's `CmpMessage`, mirroring the shape the old per-point `PrimitiveSensorModule` used to emit. */
+    private fun emitPrimitive(
+        observations: List<RawTouchObservation>,
+        start: Int,
+        end: Int,
+        strokeIndex: Int,
+    ): CmpMessage {
+        val windowObservations = observations.subList(start, end)
+        val windowPoints = windowRawPoints(observations, start, end)
+        val evidence = primitiveGraphLM.evaluate(windowPoints)
+        val label = evidence.maxByOrNull { it.value }?.key ?: UNTAUGHT_LABEL
+        val measurement = PrimitiveMeasurement(label = label, extent = chordLength(windowPoints))
+
+        val absoluteAngle = circularMean(windowObservations.map { it.tangentAngle })
+        val relativeAngle = angleDifference(absoluteAngle, previousExitAngle)
+        previousExitAngle = absoluteAngle
+
+        return CmpMessage(
+            location = centroid(windowPoints),
+            morphologicalFeatures =
+                MorphologicalFeatures(
+                    poseVectors = rotationBasis(relativeAngle),
+                    poseFullyDefined = true,
+                ),
+            nonMorphologicalFeatures =
+                object : PrimitiveFeatures {
+                    override val measurement = measurement
+                    override val startIndex = windowObservations.first().orderInStroke
+                    override val endIndex = windowObservations.last().orderInStroke
+                    override val strokeIndex = strokeIndex
+                },
+            confidence = evidence[label] ?: 0f,
+            passMessage = true,
+            senderId = SENDER_ID,
+            senderType = SenderType.SM,
+            processFeaturesInLm = true,
+        )
+    }
+
+    private fun chordLength(points: List<RawPoint>): Float {
+        val dx = points.last().x - points.first().x
+        val dy = points.last().y - points.first().y
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun centroid(points: List<RawPoint>): FloatArray {
+        var sumX = 0f
+        var sumY = 0f
+        for (point in points) {
+            sumX += point.x
+            sumY += point.y
+        }
+        return floatArrayOf(sumX / points.size, sumY / points.size)
+    }
+
+    private fun circularMean(angles: List<Float>): Float {
+        var sumCos = 0f
+        var sumSin = 0f
+        for (angle in angles) {
+            sumCos += cos(angle)
+            sumSin += sin(angle)
+        }
+        return atan2(sumSin, sumCos)
+    }
+
+    private fun rotationBasis(angle: Float): Array<FloatArray> {
+        val cosA = cos(angle)
+        val sinA = sin(angle)
+        return arrayOf(
+            floatArrayOf(cosA, sinA),
+            floatArrayOf(-sinA, cosA),
+        )
+    }
+
+    /** No-op for a "nothing new this step" message — kept symmetric with the overlay's own doc even though every call here already passes. */
+    private fun recordOverlay(
+        message: CmpMessage,
+        strokeIndex: Int,
+    ) {
         val features = message.nonMorphologicalFeatures as? PrimitiveFeatures ?: return
-        val points = rawResampledPerStroke[features.strokeIndex].subList(features.startIndex, features.endIndex + 1)
+        val points = rawResampledPerStroke[strokeIndex].subList(features.startIndex, features.endIndex + 1)
         val minX = points.minOf { it.x }
         val maxX = points.maxOf { it.x }
         val minY = points.minOf { it.y }
@@ -177,23 +326,6 @@ class MontyOrchestrator(
      * ([StrokePreprocessor.smooth]) right after resampling, damping real
      * touch jitter before tangent/curvature estimation would otherwise
      * amplify it.
-     *
-     * Tangent *angle* is invariant to uniform translate+scale, but
-     * curvature is not — [StrokePreprocessor.tangentsAndCurvatures] reports
-     * true differential curvature (radians per unit length, ≈ 1/radius),
-     * which scales inversely with whatever coordinate space it's measured
-     * in. An earlier version computed it on the pre-normalization
-     * ([resampledPerStroke]) points as an optimization, reasoning
-     * (correctly, for the *bare turning angle* curvature used to report at
-     * the time) that translate+scale invariance made it equivalent to
-     * computing on the normalized ones. That stopped being true once
-     * curvature became length-normalized: a raw, un-normalized stroke can
-     * be many times larger than the shared normalized space every other
-     * distance in this pipeline (including [PrimitiveSensorModule]'s own
-     * `MAX_LOCAL_TURN` threshold) is calibrated against, so curvature must
-     * be computed on [normalizedChunk] — the same shared normalized space —
-     * not the pre-normalization points (see IMPLEMENTATION_PLAN.md §7 for
-     * the concrete regression this caused).
      *
      * Every stroke contributes the same fixed point count to that shared
      * estimate regardless of its actual arc length, so a short stroke and a
@@ -233,5 +365,45 @@ class MontyOrchestrator(
                 )
             }
         }
+    }
+
+    private companion object {
+        const val SENDER_ID = "primitive-lm"
+
+        /** Reported when a window matches nothing taught — a deliberately inert label, never a guessed shape name (see IMPLEMENTATION_PLAN.md). */
+        const val UNTAUGHT_LABEL = "unknown"
+
+        /** Floor for evidence before taking its log (see [windowScore]) — avoids `ln(0)`, and caps how harshly a total non-match is penalized. */
+        const val MIN_EVIDENCE = 0.01f
+
+        // A primitive shorter than this is not meaningful (see
+        // IMPLEMENTATION_PLAN.md's segmentation design) -- needs empirical
+        // calibration against real taught primitives and real handwriting,
+        // same as every other constant in this pipeline's history.
+        const val MIN_WINDOW_LENGTH = 4
+
+        // Deliberately the *whole* per-stroke resample budget, not some
+        // smaller cap: a single genuinely simple stroke (e.g. one straight
+        // line spanning an entire character) must be representable as ONE
+        // primitive. An earlier, smaller cap here forced even a perfectly
+        // straight whole-stroke line into two artificial pieces purely
+        // because it exceeded the cap -- which then spuriously matched
+        // *other* unrelated two-primitive shapes on position (any bent
+        // two-segment shape's node centroids land near the same diagonal a
+        // straight line's two halves do, once each is independently
+        // normalized to its own bounding circle). Segmentation is already
+        // scoped per stroke (see [replay]), so the natural upper bound is
+        // "the whole stroke," not an arbitrary smaller number.
+        const val MAX_WINDOW_LENGTH = StrokePreprocessor.DEFAULT_RESAMPLE_COUNT
+
+        // Charged once per chosen primitive, regardless of its length. With
+        // windowScore() now returning *log*-evidence (capped at 0 for a
+        // perfect match), covering the same span with more equally-good
+        // windows no longer sums to more than one bigger window already
+        // does -- this penalty only has to break near-ties toward fewer
+        // primitives after that, not fight a runaway positive sum the way
+        // an earlier, raw-evidence version of this constant had to. Needs
+        // the same empirical calibration as the window-length bounds above.
+        const val SEGMENT_PENALTY = 0.05f
     }
 }

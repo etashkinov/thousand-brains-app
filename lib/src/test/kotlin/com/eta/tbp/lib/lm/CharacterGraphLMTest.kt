@@ -1,74 +1,124 @@
 package com.eta.tbp.lib.lm
 
+import com.eta.tbp.lib.cmp.CmpMessage
+import com.eta.tbp.lib.cmp.MorphologicalFeatures
+import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.sensor.PrimitiveFeatures
 import com.eta.tbp.lib.sensor.PrimitiveMeasurement
-import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.StrokePreprocessor
-import com.eta.tbp.lib.sensor.TouchSensorModule
+import com.eta.tbp.lib.util.angleDifference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.PI
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
 class CharacterGraphLMTest {
-    private val sensor = TouchSensorModule(sensorId = "touch-0")
+    /** One primitive's raw (un-normalized) endpoints and taught label — a "shape" under test is a sequence of these. */
+    private data class PrimitiveSpec(
+        val label: String,
+        val start: RawPoint,
+        val end: RawPoint,
+    )
 
-    /** Drives one full stroke through Sensor -> PrimitiveSensorModule -> CharacterGraphLM, per the orchestrator's per-point loop. */
+    /**
+     * Builds and drives the exact `CmpMessage` sequence
+     * [com.eta.tbp.lib.orchestrator.MontyOrchestrator] would emit for
+     * [primitives], without depending on any actual segmentation layer —
+     * this file is about [CharacterGraphLM]'s own matching/teaching logic,
+     * which [PrimitiveGraphLM]/`StrokeSegmenter` already have their own
+     * dedicated tests for. All endpoints are normalized together first (as
+     * the real orchestrator does across a whole character), so
+     * scale/position comparisons behave the same way real drawing input
+     * would.
+     */
     private fun drive(
-        points: List<RawPoint>,
-        primitiveSensor: PrimitiveSensorModule,
         characterGraphLM: CharacterGraphLM,
+        primitives: List<PrimitiveSpec>,
     ) {
-        val observations = StrokePreprocessor.preprocess(points, strokeIndex = 0)
+        val normalized = StrokePreprocessor.normalize(primitives.flatMap { listOf(it.start, it.end) })
 
-        primitiveSensor.preEpisode()
         characterGraphLM.preEpisode()
-        for (observation in observations) {
-            val primitiveMessage = primitiveSensor.step(sensor.step(observation))
-            characterGraphLM.matchingStep(listOf(primitiveMessage))
+        var previousExitAngle = 0f
+        for ((index, spec) in primitives.withIndex()) {
+            val start = normalized[index * 2]
+            val end = normalized[index * 2 + 1]
+            val absoluteAngle = atan2(end.y - start.y, end.x - start.x)
+            val relativeAngle = angleDifference(absoluteAngle, previousExitAngle)
+            previousExitAngle = absoluteAngle
+
+            val message =
+                CmpMessage(
+                    location = floatArrayOf((start.x + end.x) / 2f, (start.y + end.y) / 2f),
+                    morphologicalFeatures = MorphologicalFeatures(poseVectors = rotationBasis(relativeAngle), poseFullyDefined = true),
+                    nonMorphologicalFeatures =
+                        object : PrimitiveFeatures {
+                            override val measurement = PrimitiveMeasurement(label = spec.label, extent = (end - start).length())
+                            override val startIndex = index * 2
+                            override val endIndex = index * 2 + 1
+                            override val strokeIndex = 0
+                        },
+                    confidence = 1f,
+                    passMessage = true,
+                    senderId = "test",
+                    senderType = SenderType.SM,
+                    processFeaturesInLm = true,
+                )
+            characterGraphLM.matchingStep(listOf(message))
         }
-        primitiveSensor.postEpisode()
-        primitiveSensor.drainTrailingPrimitive()?.let { characterGraphLM.matchingStep(listOf(it)) }
         characterGraphLM.postEpisode()
     }
 
-    private fun lineShape(): List<RawPoint> = List(30) { i -> RawPoint(i.toFloat(), i.toFloat()) }
-
-    private fun lShape(pointsPerLeg: Int = 20): List<RawPoint> {
-        val step = 19f / (pointsPerLeg - 1)
-        val down = List(pointsPerLeg) { i -> RawPoint(0f, i * step) }
-        val right = List(pointsPerLeg) { i -> RawPoint(i * step, 19f) }
-        return down + right.drop(1)
+    private fun rotationBasis(angle: Float): Array<FloatArray> {
+        val cosA = cos(angle)
+        val sinA = sin(angle)
+        return arrayOf(floatArrayOf(cosA, sinA), floatArrayOf(-sinA, cosA))
     }
 
-    private fun arcShape(): List<RawPoint> =
-        List(30) { i ->
-            val angle = PI * i / 29
-            RawPoint(cos(angle).toFloat(), sin(angle).toFloat())
-        }
+    private fun lineShape(scale: Float = 1f): List<PrimitiveSpec> =
+        listOf(
+            PrimitiveSpec(
+                "line",
+                RawPoint(0f, 0f),
+                RawPoint(30f, 30f) * scale,
+            ),
+        )
+
+    private fun lShape(scale: Float = 1f): List<PrimitiveSpec> =
+        listOf(
+            PrimitiveSpec("line", RawPoint(0f, 0f), RawPoint(0f, 19f) * scale),
+            PrimitiveSpec("line", RawPoint(0f, 19f) * scale, RawPoint(19f, 19f) * scale),
+        )
+
+    private fun arcShape(scale: Float = 1f): List<PrimitiveSpec> =
+        listOf(
+            PrimitiveSpec(
+                "arc",
+                RawPoint(1f, 0f) * scale,
+                RawPoint(-1f, 0f) * scale,
+            ),
+        )
 
     @Test
     fun `a fresh instance of a taught shape scores its own label highest`() {
         val memory = GraphMemory()
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
 
         // Teach three structurally distinct shapes.
-        drive(lineShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lineShape())
         characterGraphLM.teach("line")
 
-        drive(lShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape())
         characterGraphLM.teach("L")
 
-        drive(arcShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, arcShape())
         characterGraphLM.teach("arc")
 
-        // A *fresh* instance of "L": different point density and a different scale.
-        val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
-        drive(freshL, primitiveSensor, characterGraphLM)
+        // A *fresh* instance of "L", at a different scale.
+        drive(characterGraphLM, lShape(scale = 2f))
         val evidence = characterGraphLM.evidenceSnapshot()
 
         assertTrue("expected all 3 labels scored: $evidence", evidence.keys.containsAll(setOf("line", "L", "arc")))
@@ -87,13 +137,12 @@ class CharacterGraphLMTest {
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
         assertTrue(characterGraphLM.currentNodes().isEmpty())
 
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
-        drive(lShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape())
 
         val nodes = characterGraphLM.currentNodes()
         assertTrue(
-            "expected two LINE nodes but got ${nodes.map { it.measurement }}",
-            nodes.size == 2 && nodes.all { it.measurement is PrimitiveMeasurement.Line },
+            "expected two line-labeled nodes but got ${nodes.map { it.measurement }}",
+            nodes.size == 2 && nodes.all { it.measurement.label == "line" },
         )
 
         characterGraphLM.preEpisode()
@@ -111,18 +160,16 @@ class CharacterGraphLMTest {
     @Test
     fun `a confidently recognized shape reports exactly one possible match`() {
         val memory = GraphMemory()
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
 
-        drive(lineShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lineShape())
         characterGraphLM.teach("line")
-        drive(lShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape())
         characterGraphLM.teach("L")
-        drive(arcShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, arcShape())
         characterGraphLM.teach("arc")
 
-        val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
-        drive(freshL, primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape(scale = 2f))
         val evidence = characterGraphLM.evidenceSnapshot()
 
         assertEquals(listOf("L"), characterGraphLM.possibleMatches())
@@ -132,16 +179,14 @@ class CharacterGraphLMTest {
     @Test
     fun `two structurally identical shapes taught under different labels tie`() {
         val memory = GraphMemory()
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
 
-        drive(lShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape())
         characterGraphLM.teach("L")
-        drive(lShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape())
         characterGraphLM.teach("L2")
 
-        val freshL = lShape(pointsPerLeg = 35).map { it * 2f }
-        drive(freshL, primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lShape(scale = 2f))
 
         assertEquals(setOf("L", "L2"), characterGraphLM.possibleMatches().toSet())
         val result = characterGraphLM.recognitionResult()
@@ -152,10 +197,9 @@ class CharacterGraphLMTest {
     @Test
     fun `state captures taught labels and loadState restores them into a fresh instance`() {
         val memory = GraphMemory()
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
         val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
 
-        drive(lineShape(), primitiveSensor, characterGraphLM)
+        drive(characterGraphLM, lineShape())
         characterGraphLM.teach("line")
 
         val restored = CharacterGraphLM(lmId = "character-1", memory = GraphMemory())

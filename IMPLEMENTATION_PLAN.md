@@ -1,9 +1,18 @@
 # Implementation Plan — TBP-Inspired Handwriting Recognition App
 
-**Platform:** Android (Kotlin) · **Status:** Phases 0–4 done (`lib`'s brain
-pipeline — sensor, primitives, character graph memory, orchestrator — and
-`app`'s teach/recognize UI loop are built and tested end to end); Phase 5
-(merge/spawn and primitive-fit tuning against real handwriting) is next.
+**Platform:** Android (Kotlin) · **Status:** Phases 0–4 done. Tier 1 was
+**redesigned** after Phase 4 (see §7's final entry): `PrimitiveSensorModule`,
+a hand-coded line/arc geometric classifier, was recalibrated five times
+chasing real hand-drawn failures and never converged — replaced with
+`PrimitiveGraphLM`, a taught, evidence-matched `LearningModule` (the app
+learns primitive shapes the way it learns characters, no fixed shape
+vocabulary), plus `StrokeSegmenter`, a global dynamic-programming
+segmentation search over a whole stroke, replacing the old per-point local
+threshold decision. `lib`'s brain pipeline (sensor, both LM tiers,
+orchestrator) is rebuilt and tested end to end against the concrete
+real-drawing failures that motivated it; `app`'s teach/recognize UI loop
+still targets the *old* Tier 1 and has not been rewired to teach primitives
+yet — that (plus the usual real-handwriting merge/spawn tuning) is next.
 **Core idea:** A two-tier, Thousand-Brains-Project-inspired recognizer that learns
 handwritten characters live from touchscreen strokes, with no pretraining —
 architecture ported as faithfully as possible from Monty's actual CMP message
@@ -275,6 +284,14 @@ matching Monty's own SMs not needing to persist learned state either.
 
 ### 3.4 Tier implementations
 
+> **Superseded** — `PrimitiveSensorModule` (the code sketch below) was
+> deleted and replaced by `PrimitiveGraphLM` + `StrokeSegmenter` after five
+> recalibrations of this exact design never converged on real handwriting.
+> See §7's final entry for the full story and the new design. This section
+> is kept as history (the "Known asymmetry"/SM-vs-LM reasoning below still
+> explains *why* Tier 1 used to be shaped this way) rather than rewritten,
+> since the actual code (with current KDoc) is the source of truth now.
+
 ```kotlin
 class PrimitiveSensorModule(override val sensorId: String) : SensorModule<CmpMessage> {
     // A SensorModule, not a LearningModule -- see this section's "Known
@@ -287,22 +304,22 @@ class PrimitiveSensorModule(override val sensorId: String) : SensorModule<CmpMes
     // LearningModule framing).
     //
     // step() buffers a candidate run of points as long as they, taken AS A
-    // WHOLE, still fit within WIDTH_TOLERANCE of one of two idealized
-    // shapes -- one shared tolerance, not two differently-scaled criteria:
-    //   - line: every point within WIDTH_TOLERANCE of the best-fit line
-    //     through them (PCA major axis) -- "fits inside a thin rectangle"
-    //   - arc: every point within WIDTH_TOLERANCE of a best-fit circle's
-    //     circumference (least-squares algebraic fit) -- "fits inside a
-    //     thin donut"
+    // WHOLE, still fit one of two idealized shapes, each its own tolerance:
+    //   - line: every point within LINE_WIDTH_TOLERANCE of the best-fit
+    //     line through them (PCA major axis) -- "fits inside a thin
+    //     rectangle"
+    //   - arc: every point within the tighter ARC_WIDTH_TOLERANCE of a
+    //     best-fit circle's circumference (least-squares algebraic fit) --
+    //     "fits inside a thin donut"
     // A short window (few points) can trivially find some large-radius
-    // circle passing within tolerance of a moderate corner's two legs, so
-    // one additional per-point veto (MAX_LOCAL_TURN) still discards a point
-    // whose own curvature is a sharp kink outright, calibrated well above a
-    // tight loop's own curvature so it doesn't reintroduce the bug that
-    // motivated this distance-based design -- see PrimitiveSensorModule.kt's
-    // class doc for why this replaced an earlier aspect-ratio/curvature-
-    // consistency design (and the dead-zone/threshold bugs that drove that
-    // rewrite, in §7).
+    // circle passing within a loose tolerance of a moderate corner's two
+    // legs -- ARC_WIDTH_TOLERANCE being tighter than LINE_WIDTH_TOLERANCE is
+    // what catches that now, replacing an earlier per-point curvature veto
+    // (MAX_LOCAL_TURN) that compared curvature in the character's own
+    // shared normalized space and so couldn't tell "a small feature next to
+    // a much bigger one" from "a genuine corner" -- see
+    // PrimitiveSensorModule.kt's class doc for the full reasoning (and §7
+    // for the dead-zone/threshold bugs that drove the earlier rewrites).
     //
     // There is no third CORNER type. A sharp bend is just the boundary
     // between two LINE/ARC runs — the angle between two adjacent nodes'
@@ -910,7 +927,8 @@ lives in `lib` and runs as plain JUnit on the JVM; `app`'s test surface is
 deliberately small.
 
 - **`lib` unit tests (`:lib:test`, plain JUnit, JVM only — no emulator, no
-  Robolectric) — 67 tests as of the curvature/`MAX_LOCAL_TURN` fix, across:**
+  Robolectric) — 68 tests as of the `ARC_WIDTH_TOLERANCE`/`MAX_LOCAL_TURN`
+  removal fix, across:**
   - `StrokePreprocessorTest` — resampling, normalization, tangent/curvature,
     the fast/slow + small/large invariance exit criterion, plus `smooth()`.
   - `TouchSensorModuleTest`, `CmpMessageTest` — message construction/accessors.
@@ -921,9 +939,11 @@ deliberately small.
     (a line's chord length, a semicircle's/tight loop's sweep angle, that a
     longer leg reports a larger length than a shorter one, and that a
     shallow arc reports a larger circle radius than a semicircle sliced
-    from the same normalized size), and a gentle S-curve sharing one
-    stroke's resample budget staying cohesive rather than fragmenting (the
-    regression test for the real-drawing curvature bug in §7).
+    from the same normalized size), a gentle S-curve sharing one stroke's
+    resample budget staying cohesive rather than fragmenting, and a small
+    tight hook sharing a stroke with a much longer tail segmenting as
+    exactly `[ARC, LINE]` (the two regression tests for the real-drawing
+    curvature/veto bugs in §7).
   - `GraphMatcherTest` — order/direction tolerance, mismatched-kind/count
     rejection, partial-match prefix tracking, and that a `measurement`
     mismatch alone (same positions/angles, different line length or arc
@@ -1306,3 +1326,254 @@ deliberately small.
     of divergence a "two code paths computing the same thing" duplication
     invites. Fixed by computing curvature on the post-normalization
     `normalizedChunk` instead of the pre-normalization `resampled` points.
+- **The curvature fixes above still weren't enough — real hand-drawn curves
+  kept fragmenting**, this time on a small, tightly-curved hook (e.g. the
+  top of a "2") sharing a stroke with a much longer, straighter tail. This
+  wasn't a threshold-calibration problem at all, and no amount of
+  recalibrating `MAX_LOCAL_TURN` could have fixed it: the hook's *true*
+  curvature, correctly measured, genuinely is large *relative to the
+  character's own shared normalized space* — because that space's scale is
+  set by the much-bigger tail, the hook's own radius is a small fraction of
+  it, and 1/(small fraction) is unavoidably a big number. Confirmed by
+  reproducing the exact shape as a unit test: the hook's curvature measured
+  a stable, converged ~4.0-4.1 even across a wide range of resample
+  densities (48 to 200 points) — ruling out under-resolution as the cause.
+  **No single absolute curvature threshold, however it's computed, can
+  separate "a small feature next to a much bigger one" from "a genuine
+  corner"** when both are judged against the same shared, character-wide
+  normalized scale — a structural limitation of that whole approach, not a
+  mistuned number.
+  - **Fix**: replaced the per-point curvature veto (`MAX_LOCAL_TURN`)
+    entirely with a *tighter, arc-specific* residual tolerance
+    (`ARC_WIDTH_TOLERANCE`, separate from `LINE_WIDTH_TOLERANCE`, both of
+    which used to share one `WIDTH_TOLERANCE`). This targets the veto's
+    actual original purpose — stopping a circle's 3 degrees of freedom from
+    trivially "absorbing" a moderate corner's two legs — at its real
+    source: measured residuals showed corners down to 130 degrees interior
+    already fail even the old shared 0.05 tolerance (residual 0.07-0.15);
+    the real gap was only 150-170 degrees (residual ~0.040/~0.013) sneaking
+    under it. Every legitimate arc this app needs — a tight full loop, a
+    bare semicircle, a shallow 30-degree arc, and the small hook above —
+    measures residual under 0.0035 *regardless of the character's overall
+    size*, because a residual-to-tolerance check only ever compares a run
+    against its own best-fit circle, never against anything outside that
+    run. `ARC_WIDTH_TOLERANCE = 0.008` sits with a comfortable margin on
+    both sides of the 150-170-degree gap. This is the property the old
+    curvature veto could never have, no matter how it was calibrated: a
+    quantity that's genuinely local to the run being classified, not
+    entangled with whatever else happens to share its character.
+  - `DecodedPoint.curvature` (and the whole per-point curvature veto branch
+    in `step()`) removed from `PrimitiveSensorModule` as dead code — nothing
+    in this class reads curvature anymore. `StrokeFeatures.curvature` still
+    gets computed and emitted by `TouchSensorModule` (an ordinary SM-level
+    feature, matching real Monty's own SMs computing local curvature) —
+    it's just not this particular consumer's concern anymore.
+  - Regression tests added for both concrete repros: the small-hook-plus-
+    long-tail case (must segment as exactly `[ARC, LINE]`), and the gentle
+    S-curve case from the earlier curvature fix (relaxed from "at most 2
+    primitives" to "at most 3, none degenerate" — a small, non-degenerate
+    line/arc boundary call on the S's second lobe is fine; five spurious
+    near-zero-length fragments is not).
+- **Even the `ARC_WIDTH_TOLERANCE` fix above wasn't the end of it: a real,
+  single, gently-curving stroke (from an actual screenshot) still split
+  into two straight lines meeting at a fake corner.** At that point — five
+  recalibration rounds deep, each fixing the specific shape that broke it
+  while leaving the *next* shape broken — the actual conclusion was that
+  the *category* of fix was wrong, not the specific numbers: forcing every
+  window of a continuously-varying hand-drawn stroke into one of a small,
+  fixed, hand-designed shape vocabulary (`LINE`/`ARC`) via *any* geometric
+  distance threshold is inherently lossy. A real stroke sits on a continuum
+  between straight and curved; some stroke will always land right on
+  whatever boundary a threshold draws, no matter how well-calibrated.
+  Confirmed by reading real Monty's own source
+  (`/Users/gtashkinov/Repositories/tbp.monty/`): it has no analogous
+  step anywhere. Monty's SM emits dense per-point local features (computed
+  over a small *fixed* neighborhood, e.g. `principal_curvatures` in
+  `sensor_modules.py`) and its LM matches them via *evidence accumulation
+  against learned templates* — never rounding a continuous shape into a
+  hand-designed taxonomy.
+  - **The redesign**: `PrimitiveSensorModule` deleted outright, replaced by
+    two new pieces, both directly reusing existing infrastructure rather
+    than inventing a parallel system:
+    1. **`PrimitiveGraphLM`** (new, `lib/.../lm/PrimitiveGraphLM.kt`) — a
+       genuine taught `LearningModule` for Tier 1, structurally parallel to
+       `CharacterGraphLM`: the user teaches primitive shapes (`"line"`,
+       `"arc"`, or whatever labels naturally arise) by drawing an example
+       and labeling it, exactly like teaching a character. Given a
+       candidate window, it resamples to a small fixed point count (12),
+       normalizes it, and matches it against every taught template via the
+       *same* order/direction-tolerant alignment search `GraphMatcher`
+       already used at the character level — extracted into a new shared
+       `AlignmentSearch` (`lib/.../util/AlignmentSearch.kt`) parameterized
+       by a per-node scorer, rather than forcing Tier 1's dense point
+       windows and Tier 2's sparse primitive sequences to share one node
+       schema (a design-review recommendation: share the *algorithm*, not
+       the *data shape*). Because a primitive window is short (~12 points,
+       not a whole ~48-point stroke), this brute-force search stays cheap —
+       no new nearest-neighbor evidence engine was needed.
+    2. **`StrokeSegmenter`** (new, `lib/.../orchestrator/StrokeSegmenter.kt`)
+       — a classic Viterbi-style dynamic-programming segmentation (the same
+       shape as segmenting text into dictionary words, scored by a language
+       model), replacing the old per-point local threshold decision with a
+       *global* one: find the partition of a whole stroke into windows that
+       maximizes total score, where each window's score comes from
+       `PrimitiveGraphLM`'s evidence. This directly uses the "maintain
+       multiple hypotheses, let evidence decide" principle Monty already
+       uses for object recognition, just applied one level below character
+       recognition too — a wrong segmentation that matches nothing scores
+       no worse than a "correct" one that also matches nothing, so no local
+       decision has to be independently perfect. Deliberately generic
+       (takes only a point count and a score callback), so it's fully
+       unit-testable against synthetic score functions with no real
+       geometry involved.
+    3. **`PrimitiveMeasurement`** collapsed from a closed `sealed interface`
+       (`Line(length)` / `Arc(sweepAngle, radius)`) to one open
+       `data class PrimitiveMeasurement(label: String, extent: Float)` —
+       primitives are now arbitrary taught labels, not a fixed two-variant
+       enum, and `extent` (a chord-length-based size, comparable across any
+       label) is a genuine simplification of `GraphMatcher`'s
+       `sameKind()`/`sizeScore()`, not just a generalization for its own
+       sake.
+    4. **`MontyOrchestrator.replay()`** rewritten to run `StrokeSegmenter`
+       per stroke (never bridging a primitive across a pen lift, the same
+       invariant the old design enforced), then construct each chosen
+       window's `CmpMessage` directly and feed it to
+       `CharacterGraphLM.matchingStep()` exactly as before — Tier 2 is
+       untouched apart from the `PrimitiveMeasurement` type change.
+  - **A real consequence found while wiring this in, not planned for
+    up front**: this segmentation search needs the *whole* stroke's points
+    before it can decide anything, querying many candidate windows that
+    never get chosen — it is not a per-observation streaming step the way
+    a real Monty `SensorModule.step()` is. `TouchSensorModule` (whose only
+    job was wrapping one point into a `CmpMessage` for the old
+    `PrimitiveSensorModule` chain) had no remaining consumer once that
+    chain was gone, so it — and the now-pointless `StrokeFeatures`
+    interface — were deleted alongside it rather than kept as unused
+    pass-throughs. `CharacterGraphLM` still receives the same uniform
+    `CmpMessage` stream it always did; only *how* those messages get
+    produced changed.
+  - **Three real bugs found empirically while validating this against the
+    exact failure cases that motivated it** (same measure-then-fix
+    methodology as every calibration pass in this section) — none of them
+    hypothetical, all caught by actually running the new pipeline against
+    real repro shapes before declaring it done:
+    1. **The DP summed raw evidence, not log-evidence, so it always
+       preferred more, shorter primitives.** A clean match against a taught
+       line scores close to 1.0 *regardless of window length* (any
+       sub-segment of a straight line is itself a straight line), so
+       summing raw evidence directly meant more windows almost always
+       out-scored fewer — no `segmentPenalty` could fix this by itself,
+       since a small positive-per-window gain still always wins by using
+       more of them (confirmed: a single straight stroke fragmented into
+       13 pieces with `segmentPenalty = 0.3`). Fixed by scoring each window
+       with `ln(evidence)` instead of raw evidence: log-evidence caps out
+       at 0 for a perfect match, so covering the same span with more
+       equally-good windows sums to *the same* total, not more — exactly
+       how a real language model's word segmentation naturally prefers
+       fewer, better-fitting words without being told to. `segmentPenalty`
+       dropped to a small tie-breaking constant (`0.05`) once it no longer
+       had to fight a runaway positive sum.
+    2. **`MAX_WINDOW_LENGTH` (initially 24, half the 48-point resample
+       budget) forced even a perfectly straight, whole-stroke line into two
+       artificial pieces purely because it exceeded the cap.** Two
+       collinear, same-direction primitive nodes are structurally
+       compatible (matching node count) with *any other* two-primitive
+       shape, and any bent two-segment shape's node centroids happen to
+       land near the same diagonal a straight line's two halves do (once
+       each is independently normalized to its own bounding circle) — so
+       an untaught "L" spuriously matched an already-taught "line" character
+       on position alone. Fixed by setting `MAX_WINDOW_LENGTH` to the whole
+       per-stroke resample budget (`StrokePreprocessor.DEFAULT_RESAMPLE_COUNT`)
+       instead of an arbitrary smaller number — segmentation is already
+       scoped per stroke, so the natural upper bound on one primitive is
+       "the whole stroke," not a smaller cap invented without a reason tied
+       to anything else in the pipeline.
+    3. **`PrimitiveGraphLM` had no rotation invariance — only translation
+       and scale (via `StrokePreprocessor.normalize`).** A "line" taught at
+       45 degrees barely matched a fresh *vertical* line on evidence
+       (~0.75, not ~0.99), because position comparison used each window's
+       raw (translated+scaled but unrotated) coordinates — identical shapes
+       at different absolute orientations have very different raw
+       positions even after centering and scaling. `GraphMatcher`'s
+       angle re-baselining trick only fixes *tangent-angle* comparison,
+       not position. This was the actual reason corners went undetected
+       once the `MAX_WINDOW_LENGTH` fix above was applied: a leg of an "L"
+       resampled and normalized on its own scored only ~0.75 against a
+       differently-oriented line template, not enough to reliably beat one
+       big mediocre match end to end. Fixed by rotating every window
+       (position *and* tangent angle, consistently) so its own first
+       tangent points along a fixed axis, in `PrimitiveGraphLM.resample()`
+       — recognizing *which* shape a window is is now fully orientation-
+       independent, while *how it's oriented* stays exactly where it
+       belongs, in `GraphNode.absoluteAngle` at the character level. This
+       single fix resolved every remaining test failure at once.
+  - **Verified against all three concrete real-drawing failures this
+    section documents**, end to end through the real orchestrator, each
+    now a permanent regression test in `MontyOrchestratorTest`: the small
+    hook next to a long tail segments as exactly `[arc, line]`; the single
+    gently-curving stroke stays one cohesive primitive; the S-curve
+    segments into a small, non-degenerate handful of primitives. All three
+    were the exact shapes that broke five consecutive rounds of the old
+    hand-coded classifier.
+  - **What's deliberately not done yet**: `app`'s UI still only knows how
+    to teach characters — there's no "teach primitives" screen, so
+    `RecognizerViewModel`'s `PrimitiveGraphLM` starts with (and stays at)
+    zero taught primitives, meaning nothing can be recognized end-to-end
+    through the real app yet. `MIN_WINDOW_LENGTH`/`SEGMENT_PENALTY` are
+    initial values validated only against the specific repro shapes above,
+    not a broad sweep of real handwriting — expect further calibration
+    once real primitives are taught and real characters are drawn, the
+    same iterative process every other constant in this file's history
+    went through.
+- **Why aren't `PrimitiveGraphLM` and `CharacterGraphLM` one shared
+  `EvidenceGraphLM`, the way real Monty reuses one `EvidenceGraphLM` class
+  at every hierarchy level?** A fair question once both tiers exist as
+  taught, evidence-matched recognizers — reading real Monty's own source
+  (`tbp.monty/src/tbp/monty/frameworks/models/evidence_matching/learning_module.py`,
+  its 2-level config `conf/monty/learning_module/evidence_2lm.yaml`)
+  confirmed it genuinely *is* the same class at every level there, same
+  graph-building/evidence-matching code path regardless of whether an
+  input channel is a raw SM or a child LM's own output message — only
+  per-instance config differs, never a code branch.
+  - **A first pass at porting that 1:1** — one generic `EvidenceGraphLM<F>`
+    class, `PrimitiveGraphLM` becoming a real step-driven `LearningModule`
+    fed one `CmpMessage` per raw point — was stress-tested by a
+    design-review pass and rejected, for concrete reasons, not vibes: (1)
+    a generic scorer that always folds in a third term (even a neutral
+    default) would silently shift `PrimitiveGraphLM`'s score formula from
+    today's 2-term `(angle+position)/2` toward a 3-term average, moving
+    `MERGE_THRESHOLD`/`xPercentThreshold` decisions at the margins without
+    any test catching it; (2) routing Tier 1's dense per-point windows
+    through `CharacterGraphLM`'s `CmpMessage`/pose-vector conversion path
+    would mean building a 2x2 rotation matrix from a scalar tangent angle
+    purely so the shared code could immediately `atan2` it back — invented
+    work, roughly 1,176 times per stroke (`StrokeSegmenter`'s DP tries
+    that many candidate windows on a 48-point stroke), for nothing; (3)
+    Monty's own step contract is one-shot per real timestep — nothing in
+    Monty re-runs an LM's full step contract against dozens of
+    speculative, ultimately-discarded candidates the way this app's DP
+    segmentation search does, so "same class as Monty" doesn't actually
+    transfer as an argument once you look at the access pattern; (4) a
+    merge threshold (`0.75f`) tuned for character graphs protected by a
+    hard structural label-sequence gate has no reason to be right for
+    ungated dense primitive point-clouds, where a bad merge would be a
+    silent, invisible blur (no UI exposes Tier 1's templates); (5) making
+    `GraphNode`/`GraphObjectModel` generic reaches past `lib` into `app`'s
+    `RecognizerViewModel`/`LmStateOverlay`, real churn for a benefit
+    (merge/spawn + persistence for Tier 1) nothing had asked for.
+  - **What actually shipped instead**: the one piece of logic that
+    genuinely was duplicated — the angle-rebaseline + position-error
+    scoring loop inside `GraphMatcher.alignmentScore` and
+    `PrimitiveGraphLM.alignmentScore` — extracted into one shared generic
+    function, `alignmentScore<T>` in the new `lib/.../util/AlignmentScore.kt`
+    (`angleOf`/`positionOf` extractors, an optional hard `gate` for Tier
+    2's label-sequence check, an optional `extraTerm` for Tier 2's size
+    score — absent, not defaulted-neutral, when Tier 1 calls it, so the
+    2-term-vs-3-term formula difference can't silently blur). Both call
+    sites shrink to a few lines of wiring; every other difference between
+    the tiers — episode lifecycle, orientation invariance, the structural
+    gate, merge/spawn — stays exactly as different as it deliberately
+    already was. Same "share the algorithm, not the schema" principle
+    `AlignmentSearch`'s own extraction (above) already established. Pure
+    internal refactor: all 76 `lib` tests passed unchanged, no test file
+    needed a single edit.

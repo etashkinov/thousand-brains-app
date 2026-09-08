@@ -100,15 +100,12 @@ class GraphMemory {
         )
 
     /**
-     * Plain weighted average, per variant. Unlike [weightedAverageAngle],
-     * neither [PrimitiveMeasurement] field is a periodic heading that needs
-     * wraparound-aware averaging: a line's length is already a plain
-     * magnitude, and an arc's sweep angle is a total accumulated rotation
-     * (see [com.eta.tbp.lib.sensor.PrimitiveSensorModule.sweepAngleOf]), not
-     * a direction mod 2*PI, and a radius is a plain magnitude too. [stored]
-     * and [candidate] are always the same variant here —
-     * [GraphMatcher.bestAlignedWindow] only aligns nodes whose
-     * [GraphNode.measurement] variant already matched.
+     * Plain weighted average of [PrimitiveMeasurement.extent] — a chord
+     * length is already a plain magnitude, not a periodic heading, so this
+     * needs none of [weightedAverageAngle]'s wraparound-aware trick.
+     * [stored] and [candidate] always share the same
+     * [PrimitiveMeasurement.label] here — [GraphMatcher.bestAlignedWindow]
+     * only aligns nodes whose label already matched.
      */
     private fun weightedAverageMeasurement(
         stored: PrimitiveMeasurement,
@@ -116,19 +113,10 @@ class GraphMemory {
         candidate: PrimitiveMeasurement,
         totalWeight: Float,
     ): PrimitiveMeasurement =
-        when (stored) {
-            is PrimitiveMeasurement.Line -> {
-                candidate as PrimitiveMeasurement.Line
-                PrimitiveMeasurement.Line((stored.length * storedWeight + candidate.length) / totalWeight)
-            }
-            is PrimitiveMeasurement.Arc -> {
-                candidate as PrimitiveMeasurement.Arc
-                PrimitiveMeasurement.Arc(
-                    sweepAngle = (stored.sweepAngle * storedWeight + candidate.sweepAngle) / totalWeight,
-                    radius = (stored.radius * storedWeight + candidate.radius) / totalWeight,
-                )
-            }
-        }
+        PrimitiveMeasurement(
+            label = stored.label,
+            extent = (stored.extent * storedWeight + candidate.extent) / totalWeight,
+        )
 
     /** Circular weighted mean via the sin/cos trick, so averaging never breaks at the +-PI wraparound. */
     private fun weightedAverageAngle(

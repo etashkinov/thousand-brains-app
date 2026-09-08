@@ -7,14 +7,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
 import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
 import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
-import com.eta.tbp.lib.sensor.PrimitiveSensorModule
-import com.eta.tbp.lib.sensor.TouchSensorModule
 
 /**
  * Owns the one long-lived [MontyOrchestrator] (and the brain state behind
@@ -28,13 +27,19 @@ import com.eta.tbp.lib.sensor.TouchSensorModule
  * this matches the rest of the app's existing `remember`-based Compose
  * style — just with the state hoisted to a configuration-change-surviving
  * owner instead of a `Composable`'s own memory.
+ *
+ * TODO(Phase 5 UI): [primitiveGraphLM] has no taught primitives yet and
+ * nothing in this ViewModel exposes a way to teach one — until a
+ * "teach primitives" screen exists, every character drawn here segments
+ * against an empty [PrimitiveGraphLM] and never confidently recognizes
+ * anything. This class already wires the new two-tier pipeline correctly;
+ * it just isn't feedable from the UI yet.
  */
 class RecognizerViewModel : ViewModel() {
     private val memory = GraphMemory()
-    private val sensorModule = TouchSensorModule(sensorId = "touch-0")
-    private val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
+    private val primitiveGraphLM = PrimitiveGraphLM()
     private val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
-    private val orchestrator = MontyOrchestrator(sensorModule, primitiveSensor, tier2)
+    private val orchestrator = MontyOrchestrator(primitiveGraphLM, tier2)
 
     /** Strokes drawn so far in the current character, for Compose rendering only. */
     var strokes by mutableStateOf<List<List<Offset>>>(emptyList())

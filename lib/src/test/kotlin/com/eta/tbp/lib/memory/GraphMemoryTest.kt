@@ -11,7 +11,7 @@ class GraphMemoryTest {
         x: Float,
         y: Float,
         angle: Float,
-        measurement: PrimitiveMeasurement = PrimitiveMeasurement.Line(1f),
+        measurement: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
     ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
 
     private fun staircase(jitter: Float = 0f): List<GraphNode> =
@@ -53,8 +53,8 @@ class GraphMemoryTest {
 
         val differentShape =
             listOf(
-                node(0, -1f, -1f, 3f, PrimitiveMeasurement.Arc(1f, 1f)),
-                node(1, 1f, 1f, -1f, PrimitiveMeasurement.Line(1f)),
+                node(0, -1f, -1f, 3f, PrimitiveMeasurement(label = "arc", extent = 1f)),
+                node(1, 1f, 1f, -1f, PrimitiveMeasurement(label = "line", extent = 1f)),
             )
         memory.addOrMerge(modelOf("a", differentShape), "a")
 

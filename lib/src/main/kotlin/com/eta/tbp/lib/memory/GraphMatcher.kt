@@ -1,9 +1,9 @@
 package com.eta.tbp.lib.memory
 
 import com.eta.tbp.lib.sensor.PrimitiveMeasurement
-import com.eta.tbp.lib.util.angleDifference
+import com.eta.tbp.lib.util.AlignmentSearch
+import com.eta.tbp.lib.util.alignmentScore
 import kotlin.math.abs
-import kotlin.math.sqrt
 
 /**
  * Order- and direction-tolerant matching between a stored [GraphObjectModel]
@@ -20,20 +20,17 @@ import kotlin.math.sqrt
  * a stored sequence backward and re-baselining it lands on the same
  * relative-angle sequence a genuine reverse retrace would reconstruct,
  * without needing to special-case the turn-angle sign.
+ *
+ * The offset/direction search itself lives in [AlignmentSearch] — this
+ * object only supplies [alignmentScore], the per-node comparison specific
+ * to a sparse character-level [GraphNode] sequence, so
+ * [com.eta.tbp.lib.lm.PrimitiveGraphLM] can reuse the same search over its
+ * own, differently-shaped node type without both tiers sharing one schema.
  */
 object GraphMatcher {
     private const val NO_MATCH = 0f
     private const val MAX_POSITION_ERROR = 1f // normalized-space units (Phase 1 normalizes to unit radius)
-    private const val MAX_LENGTH_ERROR = 1f // same normalized-space scale as MAX_POSITION_ERROR, for a line's length
-    private val DIRECTIONS = intArrayOf(1, -1)
-    private val PI_F = kotlin.math.PI.toFloat()
-    private val TWO_PI_F = 2f * PI_F
-
-    /** A stored-node window paired with how well it scores against some target sequence. */
-    data class Alignment(
-        val window: List<GraphNode>,
-        val score: Float,
-    )
+    private const val MAX_LENGTH_ERROR = 1f // same normalized-space scale as MAX_POSITION_ERROR, for a primitive's extent
 
     /** Full match: [stored] and [candidate] must have the same node count. */
     fun matchScore(
@@ -41,7 +38,7 @@ object GraphMatcher {
         candidate: GraphObjectModel,
     ): Float {
         if (stored.nodes.isEmpty() || stored.nodes.size != candidate.nodes.size) return NO_MATCH
-        return bestAlignment(stored.nodes, candidate.nodes).score
+        return AlignmentSearch.bestAlignment(stored.nodes, candidate.nodes, ::alignmentScore).score
     }
 
     /**
@@ -53,7 +50,7 @@ object GraphMatcher {
         partialNodes: List<GraphNode>,
     ): Float {
         if (partialNodes.isEmpty() || partialNodes.size > stored.nodes.size) return NO_MATCH
-        return bestAlignment(stored.nodes, partialNodes).score
+        return AlignmentSearch.bestAlignment(stored.nodes, partialNodes, ::alignmentScore).score
     }
 
     /**
@@ -66,117 +63,40 @@ object GraphMatcher {
         candidate: GraphObjectModel,
     ): List<GraphNode>? {
         if (stored.nodes.isEmpty() || stored.nodes.size != candidate.nodes.size) return null
-        return bestAlignment(stored.nodes, candidate.nodes).window
+        return AlignmentSearch.bestAlignment(stored.nodes, candidate.nodes, ::alignmentScore).window
     }
 
-    private fun bestAlignment(
-        storedNodes: List<GraphNode>,
-        target: List<GraphNode>,
-    ): Alignment {
-        var best = Alignment(window = emptyList(), score = NO_MATCH)
-        for (direction in DIRECTIONS) {
-            for (offset in storedNodes.indices) {
-                val window = windowOf(storedNodes, offset, direction, target.size)
-                val score = alignmentScore(window, target)
-                if (score > best.score) best = Alignment(window, score)
-            }
-        }
-        return best
-    }
-
-    private fun windowOf(
-        nodes: List<GraphNode>,
-        offset: Int,
-        direction: Int,
-        length: Int,
-    ): List<GraphNode> {
-        val n = nodes.size
-        return List(length) { i -> nodes[Math.floorMod(offset + i * direction, n)] }
-    }
-
-    /** 0f if the primitive-kind (`Line`/`Arc`) sequence doesn't match at this alignment. */
+    /** 0f if the primitives' taught-label sequence doesn't match at this alignment. */
     private fun alignmentScore(
         window: List<GraphNode>,
         target: List<GraphNode>,
-    ): Float {
-        for (i in window.indices) {
-            if (!sameKind(window[i].measurement, target[i].measurement)) return NO_MATCH
-        }
+    ): Float =
+        alignmentScore(
+            window,
+            target,
+            angleOf = { it.absoluteAngle },
+            positionOf = { it.location },
+            gate = { a, b -> sameKind(a.measurement, b.measurement) },
+            maxPositionError = MAX_POSITION_ERROR,
+            extraTerm = { a, b -> sizeScore(a.measurement, b.measurement) },
+        )
 
-        val windowBaseline = window.first().absoluteAngle
-        val targetBaseline = target.first().absoluteAngle
-
-        var angleError = 0f
-        var positionError = 0f
-        var sizeScoreSum = 0f
-        for (i in window.indices) {
-            val windowAngle = angleDifference(window[i].absoluteAngle, windowBaseline)
-            val targetAngle = angleDifference(target[i].absoluteAngle, targetBaseline)
-            angleError += abs(angleDifference(windowAngle, targetAngle))
-            positionError += distance(window[i].location, target[i].location)
-            sizeScoreSum += sizeScore(window[i].measurement, target[i].measurement)
-        }
-
-        val n = window.size
-        val angleScore = (1f - (angleError / n) / PI_F).coerceIn(0f, 1f)
-        val positionScore = (1f - (positionError / n) / MAX_POSITION_ERROR).coerceIn(0f, 1f)
-        val sizeScore = sizeScoreSum / n
-        return (angleScore + positionScore + sizeScore) / 3f
-    }
-
-    private fun distance(
-        a: FloatArray,
-        b: FloatArray,
-    ): Float {
-        val dx = a[0] - b[0]
-        val dy = a[1] - b[1]
-        return sqrt(dx * dx + dy * dy)
-    }
-
-    /** True if [a] and [b] are the same [PrimitiveMeasurement] variant (`Line`/`Arc`), regardless of their measured values. */
+    /** True if [a] and [b] are the same taught primitive [PrimitiveMeasurement.label], regardless of their measured size. */
     private fun sameKind(
         a: PrimitiveMeasurement,
         b: PrimitiveMeasurement,
-    ): Boolean =
-        when (a) {
-            is PrimitiveMeasurement.Line -> b is PrimitiveMeasurement.Line
-            is PrimitiveMeasurement.Arc -> b is PrimitiveMeasurement.Arc
-        }
+    ): Boolean = a.label == b.label
 
     /**
-     * How closely two same-kind primitives' sizes match, in 0..1 — a
-     * line's length error against [MAX_LENGTH_ERROR]; an arc's sweep-angle
-     * error against a full turn averaged with its radius error against
-     * [MAX_LENGTH_ERROR] (the same normalized-space scale as a line's
-     * length, since a radius lives in that same unit). Each of these is
-     * normalized to 0..1 independently before averaging across a (possibly
-     * mixed line/arc) window, rather than pooling raw errors that aren't on
-     * comparable scales. [window]/[target] are already known to be the same
-     * variant by the time this is called (see [alignmentScore]'s
-     * [sameKind] gate), so the cast to the same variant as [window] is
-     * always safe.
-     *
-     * Sweep-angle error is a plain difference, not [angleDifference]'s
-     * wrapped one: a sweep angle is a total accumulated rotation (can
-     * exceed a half turn for a tight loop, see
-     * [com.eta.tbp.lib.sensor.PrimitiveSensorModule.sweepAngleOf]), not a
-     * periodic heading, so treating two large-but-different sweeps as
-     * "close" just because they're both near a full turn would be wrong.
+     * How closely two same-label primitives' sizes match, in 0..1 — a
+     * plain [PrimitiveMeasurement.extent] error against [MAX_LENGTH_ERROR].
+     * One generic size measure works uniformly across any taught label,
+     * unlike the old type-specific fields (a line's length, an arc's
+     * sweep angle/radius) this replaced — see [PrimitiveMeasurement]'s
+     * class doc.
      */
     private fun sizeScore(
         window: PrimitiveMeasurement,
         target: PrimitiveMeasurement,
-    ): Float =
-        when (window) {
-            is PrimitiveMeasurement.Line -> {
-                target as PrimitiveMeasurement.Line
-                (1f - abs(window.length - target.length) / MAX_LENGTH_ERROR).coerceIn(0f, 1f)
-            }
-            is PrimitiveMeasurement.Arc -> {
-                target as PrimitiveMeasurement.Arc
-                val sweepScore = (1f - abs(window.sweepAngle - target.sweepAngle) / TWO_PI_F).coerceIn(0f, 1f)
-                val radiusScore = (1f - abs(window.radius - target.radius) / MAX_LENGTH_ERROR).coerceIn(0f, 1f)
-                (sweepScore + radiusScore) / 2f
-            }
-        }
+    ): Float = (1f - abs(window.extent - target.extent) / MAX_LENGTH_ERROR).coerceIn(0f, 1f)
 }

@@ -11,15 +11,15 @@ class GraphMatcherTest {
         x: Float,
         y: Float,
         angle: Float,
-        measurement: PrimitiveMeasurement = PrimitiveMeasurement.Line(1f),
+        measurement: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
     ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
 
     /** A simple 3-node "staircase": line, arc, line. */
     private fun staircase(): List<GraphNode> =
         listOf(
-            node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(1f)),
-            node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(1f, 1f)),
-            node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(1f)),
+            node(0, -1f, 0f, 0f, PrimitiveMeasurement(label = "line", extent = 1f)),
+            node(1, 0f, 0f, 1.5f, PrimitiveMeasurement(label = "arc", extent = 1f)),
+            node(2, 1f, 1f, 0.2f, PrimitiveMeasurement(label = "line", extent = 1f)),
         )
 
     private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
@@ -47,10 +47,10 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `different primitive type sequence scores zero`() {
+    fun `different primitive label sequence scores zero`() {
         val nodes = staircase()
-        val differentTypes = listOf(node(0, -1f, 0f, 0f), node(1, 0f, 0f, 1.5f), node(2, 1f, 1f, 0.2f))
-        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentTypes))
+        val differentLabels = listOf(node(0, -1f, 0f, 0f), node(1, 0f, 0f, 1.5f), node(2, 1f, 1f, 0.2f))
+        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentLabels))
         assertEquals(0f, score, 1e-6f)
     }
 
@@ -59,9 +59,9 @@ class GraphMatcherTest {
         val nodes = staircase()
         val farOff =
             listOf(
-                node(0, 5f, 5f, 3f, PrimitiveMeasurement.Line(1f)),
-                node(1, -5f, -5f, -2f, PrimitiveMeasurement.Arc(1f, 1f)),
-                node(2, 8f, -3f, 1f, PrimitiveMeasurement.Line(1f)),
+                node(0, 5f, 5f, 3f, PrimitiveMeasurement(label = "line", extent = 1f)),
+                node(1, -5f, -5f, -2f, PrimitiveMeasurement(label = "arc", extent = 1f)),
+                node(2, 8f, -3f, 1f, PrimitiveMeasurement(label = "line", extent = 1f)),
             )
         val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(farOff))
         // Angle, position and size error are averaged, not multiplied, so a
@@ -95,51 +95,27 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `a candidate with the same shape but different-length lines scores below an exact size match`() {
-        // Same positions, angles, and primitive-type sequence -- only the
-        // reported line lengths differ. Before PrimitiveMeasurement existed,
-        // a short line and a long line pointing the same way were
+    fun `a candidate with the same shape but a different extent scores below an exact size match`() {
+        // Same positions, angles, and primitive-label sequence -- only the
+        // reported extent differs. Before PrimitiveMeasurement existed, a
+        // short primitive and a long one pointing the same way were
         // indistinguishable to GraphMatcher; this is the regression test
         // that the size dimension actually affects the score now.
         val nodes = staircase()
         val exactMatch = staircase()
-        val differentLengths =
+        val differentExtent =
             listOf(
-                node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(5f)),
-                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(5f, 5f)),
-                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(5f)),
+                node(0, -1f, 0f, 0f, PrimitiveMeasurement(label = "line", extent = 5f)),
+                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement(label = "arc", extent = 5f)),
+                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement(label = "line", extent = 5f)),
             )
 
         val exactScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(exactMatch))
-        val mismatchedSizeScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentLengths))
+        val mismatchedSizeScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentExtent))
 
         assertTrue(
             "expected a size mismatch to score lower than an exact match: $mismatchedSizeScore vs $exactScore",
             mismatchedSizeScore < exactScore,
-        )
-    }
-
-    @Test
-    fun `a candidate with the same shape but a different-radius arc scores below an exact size match`() {
-        // Same regression as the line-length test above, for the other
-        // measurement variant: an arc's radius is a real size component
-        // alongside its sweep angle (see PrimitiveMeasurement.Arc's class
-        // doc), so a radius mismatch alone should also cost score.
-        val nodes = staircase()
-        val exactMatch = staircase()
-        val differentRadius =
-            listOf(
-                node(0, -1f, 0f, 0f, PrimitiveMeasurement.Line(1f)),
-                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement.Arc(sweepAngle = 1f, radius = 5f)),
-                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement.Line(1f)),
-            )
-
-        val exactScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(exactMatch))
-        val mismatchedRadiusScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentRadius))
-
-        assertTrue(
-            "expected a radius mismatch to score lower than an exact match: $mismatchedRadiusScore vs $exactScore",
-            mismatchedRadiusScore < exactScore,
         )
     }
 

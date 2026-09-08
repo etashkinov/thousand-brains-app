@@ -1,12 +1,10 @@
 package com.eta.tbp.lib.orchestrator
 
 import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
-import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
-import com.eta.tbp.lib.sensor.TouchSensorModule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,11 +13,22 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 class MontyOrchestratorTest {
+    /** A generic straight-line primitive example — taught once per orchestrator, the same "shapes before characters" curriculum every character-level test relies on. */
+    private fun canonicalLine(): List<RawPoint> = List(15) { i -> RawPoint(i.toFloat(), i.toFloat()) }
+
+    /** A generic semicircle primitive example, for the same reason as [canonicalLine]. */
+    private fun canonicalArc(): List<RawPoint> =
+        List(15) { i ->
+            val angle = PI * i / 14
+            RawPoint(cos(angle).toFloat(), sin(angle).toFloat())
+        }
+
     private fun newOrchestrator(memory: GraphMemory = GraphMemory()): MontyOrchestrator {
-        val sensor = TouchSensorModule(sensorId = "touch-0")
-        val primitiveSensor = PrimitiveSensorModule(sensorId = "primitive-0")
+        val primitiveGraphLM = PrimitiveGraphLM()
+        primitiveGraphLM.teach("line", canonicalLine())
+        primitiveGraphLM.teach("arc", canonicalArc())
         val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
-        return MontyOrchestrator(sensor, primitiveSensor, tier2)
+        return MontyOrchestrator(primitiveGraphLM, tier2)
     }
 
     private fun teachCharacter(
@@ -75,23 +84,6 @@ class MontyOrchestratorTest {
 
     @Test
     fun `a taught corner shape is not confused with an unrelated arc through the real orchestrator`() {
-        // Regression test for a curvature-scale bug specific to the
-        // orchestrator: buildNormalizedObservations() used to compute
-        // curvature on each stroke's pre-normalization points as an
-        // optimization that was valid for a bare turning-angle curvature
-        // (rotation/scale-invariant) but silently wrong once curvature
-        // became real, length-normalized differential curvature (which
-        // scales inversely with whatever coordinate space it's measured
-        // in). lShape() drawn at its small raw pixel scale measured a
-        // corner curvature roughly 13x smaller than it should have in the
-        // shared normalized space, so PrimitiveSensorModule's sharp-corner
-        // veto never tripped -- "L" got taught as [ARC, LINE] instead of
-        // [LINE, LINE], and a completely unrelated arcShape() (one ARC
-        // node) then spuriously matched "L"'s corrupted ARC node instead of
-        // scoring Unknown. This only reproduces through the real
-        // orchestrator (not by driving PrimitiveSensorModule directly),
-        // since it's specifically about which coordinate space curvature
-        // gets computed in during buildNormalizedObservations().
         val orchestrator = newOrchestrator()
         teachCharacter(orchestrator, listOf(lineShape()), "line")
         teachCharacter(orchestrator, listOf(lShape()), "L")
@@ -117,7 +109,7 @@ class MontyOrchestratorTest {
 
     @Test
     fun `shared whole-character normalization discriminates cross-stroke position, not just per-stroke shape`() {
-        // Both labels are structurally identical primitive-type sequences (line,
+        // Both labels are structurally identical primitive sequences (line,
         // line) with the same relative turn angle -- the only thing that can tell
         // them apart is where the two strokes sit relative to each other, which
         // requires normalizing across the whole character rather than per stroke.
@@ -206,7 +198,7 @@ class MontyOrchestratorTest {
         val overlays = orchestrator.currentPrimitiveOverlays()
         assertEquals(1, overlays.size)
         val overlay = overlays.single()
-        assertTrue("expected a Line measurement but was ${overlay.measurement}", overlay.measurement is PrimitiveMeasurement.Line)
+        assertEquals("line", overlay.measurement.label)
         assertEquals(0f, overlay.topLeft.x, 1f)
         assertEquals(0f, overlay.topLeft.y, 1f)
         assertEquals(29f, overlay.bottomRight.x, 1f)
@@ -222,5 +214,101 @@ class MontyOrchestratorTest {
 
         orchestrator.clearCharacter()
         assertTrue(orchestrator.currentPrimitiveOverlays().isEmpty())
+    }
+
+    // --- Real-drawing regression tests for the bugs that motivated this
+    // whole redesign (see IMPLEMENTATION_PLAN.md §7): PrimitiveSensorModule,
+    // the hand-coded geometric classifier this replaced, was recalibrated
+    // five times chasing these exact three shapes and never converged. All
+    // three now go through PrimitiveGraphLM's taught, evidence-matched
+    // recognition plus StrokeSegmenter's global search instead of a local,
+    // hand-tuned distance threshold.
+
+    @Test
+    fun `a small tight hook sharing a stroke with a much longer tail segments as one arc plus one line`() {
+        // The concrete repro that first surfaced the old design's structural
+        // flaw: a small, tightly-curved hook (radius 70) attached to a much
+        // longer, nearly-straight tail (length 400), drawn as one stroke.
+        // The hook's curvature, measured in the character's own shared
+        // normalized space (set mostly by the much-bigger tail), used to
+        // read as "sharp" purely because the tail was so much bigger --
+        // no single geometric threshold could accept that and still catch
+        // real corners elsewhere. Evidence-based matching doesn't compare
+        // a window against the rest of the character at all, only against
+        // what's actually been taught, so it isn't affected by how big
+        // anything else happens to be.
+        val orchestrator = newOrchestrator()
+        val hookRadius = 70f
+        val hookPointCount = 25
+        val hook =
+            (0 until hookPointCount).map { i ->
+                val theta = PI + PI * i / (hookPointCount - 1)
+                RawPoint((hookRadius + hookRadius * cos(theta)).toFloat(), (hookRadius * sin(theta)).toFloat())
+            }
+        val tailStart = hook.last()
+        val tail = (1..60).map { i -> RawPoint(tailStart.x, tailStart.y + 400f * i / 60) }
+
+        orchestrator.beginCharacter()
+        orchestrator.stepStroke(hook + tail)
+
+        assertEquals(listOf("arc", "line"), orchestrator.currentPrimitiveOverlays().map { it.measurement.label })
+    }
+
+    @Test
+    fun `a single gently-curving stroke stays one primitive, not a false corner split`() {
+        // The repro from an actual screenshot: a smoothly, continuously
+        // curving stroke (no real corner anywhere) used to fragment into
+        // two straight lines meeting at a fake kink, because any fixed
+        // geometric line/arc fit tolerance has some genuinely intermediate
+        // stroke sitting right on its boundary. There's no such boundary to
+        // sit on here: the whole stroke either matches something taught
+        // well enough to stay whole, or it doesn't -- and StrokeSegmenter's
+        // segment-count penalty means it only pays to split when splitting
+        // scores meaningfully better, not merely differently.
+        val orchestrator = newOrchestrator()
+        val points =
+            List(60) { i ->
+                val t = i / 59f
+                val angle = Math.toRadians(35.0) * t
+                RawPoint(200f * sin(angle).toFloat(), 600f * t)
+            }
+
+        orchestrator.beginCharacter()
+        orchestrator.stepStroke(points)
+
+        val overlays = orchestrator.currentPrimitiveOverlays()
+        assertEquals("expected one cohesive primitive but got ${overlays.map { it.measurement }}", 1, overlays.size)
+    }
+
+    @Test
+    fun `a gentle S-curve sharing one stroke's resample budget segments into a small, cohesive handful of primitives`() {
+        // The original curvature/resample-density repro: a smooth S drawn
+        // as one continuous stroke used to fragment into ~5 degenerate,
+        // near-zero-length pieces. What's left here is at most an ordinary
+        // line/arc boundary call at the S's inflection point -- a small
+        // primitive count with nothing degenerate, not fragmentation.
+        val orchestrator = newOrchestrator()
+        val amplitude = 60f
+        val length = 600f
+        val sCurve =
+            List(150) { i ->
+                val t = i / 149f
+                RawPoint(amplitude * sin(2 * PI * t).toFloat(), length * t)
+            }
+
+        orchestrator.beginCharacter()
+        orchestrator.stepStroke(sCurve)
+
+        val overlays = orchestrator.currentPrimitiveOverlays()
+        assertTrue(
+            "expected a small, cohesive handful of primitives but got ${overlays.map { it.measurement }}",
+            overlays.size in 1..3,
+        )
+        for (overlay in overlays) {
+            assertTrue(
+                "expected no degenerate near-zero-extent primitives but found ${overlay.measurement}",
+                overlay.measurement.extent > 0.1f,
+            )
+        }
     }
 }

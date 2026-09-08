@@ -42,33 +42,41 @@ this was designed in.
 
 ## How it works, in one paragraph
 
-Touch input is captured as raw (x, y, t) points per stroke — this is the
-**Sensor Module**'s input, and it's a literal sensorimotor trace, not a
-reconstruction. Points are resampled and normalized, then a second **Sensor
-Module** segments them into primitive shapes (lines and arcs — a bend is
-just the boundary between two of them, not its own primitive type; see
-`IMPLEMENTATION_PLAN.md` §3.4/§7 for why), each tagged with its pose
-*relative to the stroke*, not the screen. A **Learning
-Module** composes those primitives into a character-level graph —
-nodes and edges with relative positions and tolerance-banded angles — and
-matches new input against every previously-taught character by accumulating
-evidence as the stroke is drawn. If two characters are equally well supported
-(the honest "is this a 6 or a 9?" case), the app says so instead of guessing.
-Teaching is just: draw, then tell it the label — which either merges into an
-existing model (if it's a natural variation) or creates a new variant under
-the same label (if it's structurally different, e.g. a different stroke
-order).
+Touch input is captured as raw (x, y, t) points per stroke — a literal
+sensorimotor trace, not a reconstruction. There are now **two taught
+Learning Modules**, not one: a whole stroke's points are searched by a
+global dynamic-programming pass (`StrokeSegmenter`) for the partition into
+windows that best matches whatever primitive shapes the user has *taught*
+(`PrimitiveGraphLM`) — there's no fixed line/arc vocabulary baked into the
+code; a primitive is whatever label the user teaches it, matched purely by
+evidence, the same way the character tier already worked. Each chosen
+window becomes one message tagged with its pose *relative to the stroke*,
+not the screen. The character-level **Learning Module**
+(`CharacterGraphLM`) then composes those primitives into a character-level
+graph — nodes and edges with relative positions and tolerance-banded
+angles — and matches new input against every previously-taught character by
+accumulating evidence as the stroke is drawn. If two characters are equally
+well supported (the honest "is this a 6 or a 9?" case), the app says so
+instead of guessing. Teaching is just: draw, then tell it the label — which
+either merges into an existing model (if it's a natural variation) or
+creates a new variant under the same label (if it's structurally different,
+e.g. a different stroke order). See `IMPLEMENTATION_PLAN.md` §7 for why the
+primitive tier moved from a hand-coded geometric fit to this taught,
+evidence-matched design.
 
 ---
 
 ## Architecture
 
 ```
-Touch (MotionEvent) → SensorModule → PrimitiveSensorModule → CharacterGraphLM → GraphMemory
-                            ↑                  ↑                    ↑
-                   (same CmpMessage    (fixed feature      (the one LearningModule —
-                    schema throughout)  extraction, not     evidence accumulation,
-                                        learned — see below) merge/spawn decisions)
+Touch (MotionEvent) → SensorModule → MontyOrchestrator                      → CharacterGraphLM → GraphMemory<characters>
+                            ↑         (StrokeSegmenter: global DP search       ↑
+                   (same CmpMessage    over each stroke, scored by          (evidence accumulation,
+                    schema throughout) PrimitiveGraphLM.evaluate)            merge/spawn decisions)
+                                              ↑
+                                       PrimitiveGraphLM ── GraphMemory-style taught templates
+                                       (taught by drawing + labeling, evidence-matched,
+                                        no fixed shape vocabulary)
 ```
 
 This is deliberately **not** a simplified, inspired-by version of Monty's
@@ -105,14 +113,21 @@ design — it ports Monty's actual published interfaces:
   `detect_new_object_k_steps` — the actual mechanism Monty uses to decide
   whether new evidence should merge into an existing learned model or spawn a
   new one.
-- **Only one `LearningModule`, and that's Monty-faithful, not a shortcut.**
-  `CharacterGraphLM` is the sole `LearningModule` in this app's hierarchy;
-  primitive segmentation (line/arc fitting) is `PrimitiveSensorModule`, a
-  `SensorModule` chained after the raw touch sensor. Real Monty's own
-  `SensorModule` computes features like curvature via fixed, deterministic
-  math too — not a learned model — so a single-sensor-chain, single-LM
-  hierarchy is Monty's own ordinary baseline configuration, not a
-  stripped-down one. See Known limitations for the full reasoning.
+- **Two taught tiers now, both evidence-matched — no fixed shape
+  vocabulary anywhere.** `PrimitiveGraphLM` (Tier 1) and `CharacterGraphLM`
+  (Tier 2) are both genuine, taught `LearningModule`-style components: a
+  primitive ("line", "arc", or whatever label the user teaches) is
+  recognized by matching against taught examples, exactly the way a
+  character is. This replaced an earlier `PrimitiveSensorModule` that
+  classified strokes into a fixed `LINE`/`ARC` vocabulary via hand-coded
+  geometric distance-fit thresholds — recalibrated five times chasing real
+  handwriting failures and never converging, because forcing a
+  continuously-varying stroke into a small, fixed taxonomy via any hard
+  threshold is inherently lossy. Real Monty has no analogous step: it
+  emits dense per-point features and matches everything via evidence
+  accumulation against *learned* templates, never a hand-designed
+  taxonomy. See `IMPLEMENTATION_PLAN.md` §7 for the full redesign story,
+  including the real-Monty source citation and Known limitations below.
 
 Full interface listings, code, and an explicit table of what's a faithful
 port vs. a deliberate simplification (mainly: 2D instead of 3D, and no
@@ -181,19 +196,21 @@ lib/                        # Kotlin/JVM module — NO Android SDK dependency
       RawTouchObservation.kt
       SensorModule.kt         # generic interface: SensorModule<T>
       StrokePreprocessor.kt   # resample, smooth, normalize, tangent/curvature
-      TouchSensorModule.kt    # SensorModule<RawTouchObservation>; StrokeFeatures payload
-      PrimitiveSensorModule.kt # SensorModule<CmpMessage>; line/arc fit tests, PrimitiveMeasurement (type+size)/PrimitiveFeatures
+      PrimitiveMeasurement.kt # open label+extent measurement, PrimitiveFeatures payload
     lm/
       LearningModule.kt       # shared interface: matchingStep/receiveVotes/sendOutVote/getOutput
-      CharacterGraphLM.kt     # the one LearningModule; evidenceSnapshot(), possibleMatches(), teach()
+      PrimitiveGraphLM.kt     # Tier 1: taught, evidence-matched primitive recognizer (no fixed shape vocabulary)
+      CharacterGraphLM.kt     # Tier 2: evidenceSnapshot(), possibleMatches(), teach()
     orchestrator/
-      MontyOrchestrator.kt    # wires the sensor chain into CharacterGraphLM, per-character episodes
+      StrokeSegmenter.kt      # generic global DP segmentation search (Viterbi-style)
+      MontyOrchestrator.kt    # runs StrokeSegmenter per stroke, scored by PrimitiveGraphLM, feeds CharacterGraphLM
     memory/
       GraphObjectModel.kt     # GraphNode, GraphEdge, GraphObjectModel, edgeChainOf
-      GraphMatcher.kt         # order/direction-tolerant matching
+      GraphMatcher.kt         # order/direction-tolerant matching (character tier)
       GraphMemory.kt          # merge/spawn logic, snapshot()/restore()
     util/
       Angles.kt               # shared angle-wrapping helpers
+      AlignmentSearch.kt      # generic order/direction-tolerant alignment search, shared by both tiers
   src/test/kotlin/.../        # plain JUnit unit tests: resampling, segmentation,
                               # matching, merge/spawn, end-to-end recognition —
                               # runs on the JVM, no emulator, no Robolectric
@@ -230,33 +247,39 @@ static-image/multi-LM-voting stretch goal) and testing strategy.
 **Phases 0–4 are done:** `lib`'s full brain pipeline — touch resampling,
 primitive segmentation, character-graph learning and recognition, and the
 `MontyOrchestrator` step loop — plus `app`'s teach/recognize UI are built
-and tested end to end (55 `lib` unit tests), including each phase's own
-concrete exit criterion. There's no persisted state between runs yet
-(Phase 7's job). **Phase 5** (merge/spawn and primitive-fit tuning against
-real handwriting) is next.
+and tested end to end. There's no persisted state between runs yet
+(Phase 7's job).
+
+**Tier 1 has since been redesigned** (see `IMPLEMENTATION_PLAN.md` §7): the
+original hand-coded `PrimitiveSensorModule` (fixed `LINE`/`ARC` geometric
+fit tests) is gone, replaced by `PrimitiveGraphLM` (a taught,
+evidence-matched primitive recognizer, structurally parallel to
+`CharacterGraphLM`) plus `StrokeSegmenter` (a global dynamic-programming
+search over each whole stroke). `lib`'s test suite (76 unit tests) passes
+against this new design, including regression tests for the specific real
+hand-drawn shapes that motivated it. **`app`'s teach/recognize UI has not
+been rewired for this yet** — there's no "teach primitives" screen, so a
+fresh `PrimitiveGraphLM` starts (and stays) empty and the app isn't
+end-to-end functional for a real user until that UI exists. **Phase 5**
+(building that UI, plus primitive/segmentation constant tuning against real
+handwriting) is next.
 
 ---
 
 ## Known limitations (by design, not oversight)
 
-- **Only one `LearningModule` exists in this app's hierarchy — and that's
-  Monty-consistent, not a shortcut.** `CharacterGraphLM` builds and matches
-  a learned graph model; primitive segmentation (line/arc fitting — distance
-  from a best-fit line or circle, within one shared tolerance) is
-  `PrimitiveSensorModule`, a `SensorModule`, not a `LearningModule` at all.
-  It used to implement
-  `LearningModule<Unit>` — satisfying the interface without being a genuine
-  *learning* module, since `state()` was always `Unit` and
-  `receiveVotes`/`sendOutVote`/`setExperimentMode` were permanent no-ops.
-  Checking real Monty's own `SensorModule` showed it computes curvature via
-  fixed least-squares math too, not a learned model — so this tier's job
-  was architecturally SM-shaped work all along, and it's modeled as one
-  now. A single-sensor-chain, single-LM hierarchy (this app's actual
-  shape, `CharacterGraphLM` being the only `LearningModule`) is Monty's own
-  ordinary baseline configuration, not a stripped-down one. See
-  `IMPLEMENTATION_PLAN.md` §3.4's "Known asymmetry" note for the full
-  reasoning, including why the same fixed-threshold vocabulary reasonably
-  extends to line/arc but not to open-ended taught characters.
+- **The primitive tier requires teaching before anything can be
+  recognized, by design.** `PrimitiveGraphLM` starts with zero taught
+  labels and has no geometric fallback for an untaught shape — a window
+  that matches nothing scores no better than any other bad segmentation,
+  which correctly surfaces as `RecognitionResult.Unknown` rather than a
+  guess. This was a deliberate call during the Tier 1 redesign (see
+  `IMPLEMENTATION_PLAN.md` §7): an earlier draft considered a geometric-fit
+  fallback for unmatched windows, dropped because it would quietly become
+  the dominant path whenever evidence is close, reintroducing exactly the
+  brittle hand-coded classification this redesign replaced. The practical
+  consequence today: `app` has no "teach primitives" UI yet, so nothing can
+  be recognized end-to-end through the app until that's built (Phase 5).
 - **No general compositional part-swapping.** Real hierarchical composition
   (recognizing a novel combination of familiar parts) is flagged as immature
   even in Monty's own published work; this app's multi-variant-per-label
