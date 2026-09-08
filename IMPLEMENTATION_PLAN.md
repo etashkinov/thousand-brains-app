@@ -1674,3 +1674,91 @@ deliberately small.
     to be expanded — it was gated behind `showLmState` for no real reason
     (the overlay is meant for the user teaching characters, not just for
     debugging) and now always renders.
+- **Matching moved off the main thread — the app was freezing.** Every
+  `RecognizerViewModel` method called directly and synchronously into
+  `MontyOrchestrator`/`CharacterGraphLM`/`PrimitiveGraphLM`/`GraphMemory`
+  from Compose event handlers, i.e. on the main thread; as taught
+  templates/characters accumulated, this visibly blocked rendering and
+  input. Coroutines weren't used anywhere in this codebase before this —
+  confined entirely to `app`; `lib` gets no coroutine dependency and stays
+  the plain, synchronous, deterministic module it's designed to be.
+  - **Design**: all access to `orchestrator`/`tier2`/`primitiveGraphLM`/
+    `memory` (plain, non-thread-safe mutable Kotlin objects) is confined to
+    one serial dispatcher, `Dispatchers.Default.limitedParallelism(1)` —
+    chosen over a dedicated single-thread executor since it's a lightweight
+    view with no OS thread to leak, and (verified against
+    `kotlinx.coroutines.internal.LimitedDispatcher` source, not just
+    documentation) its worker count is CAS-bounded to `parallelism`, so at
+    `parallelism = 1` there's always exactly one active worker draining a
+    strict FIFO queue. That FIFO guarantee holds relative to real user-
+    action order specifically because every dispatch originates from a
+    `viewModelScope` coroutine started on `Dispatchers.Main.immediate` from
+    an already-Main-thread Compose callback, which runs synchronously (no
+    re-dispatch) in that case.
+  - **The subtle part**: each method bundles its mutation *and* its
+    subsequent state read into one `withContext(matchingDispatcher) { }`
+    block, never a mutation in one dispatch and a read in a separate,
+    later one. Tracing a concrete interleaving (a stroke completes, then
+    "Undo" is tapped before the first stroke's matching finishes) showed
+    why: both dispatches correctly FIFO-serialize relative to each other,
+    but a *separately*-dispatched read for the first action could still
+    run on Main concurrently with the second action's already-started
+    background mutation — a genuine data race on `lib`'s mutable state
+    (e.g. `CharacterGraphLM.evidenceSnapshot()`'s iteration racing
+    `preEpisode()`'s `nodeBuffer.clear()` from the next queued operation).
+    Bundling read with write makes each user action one atomic hand-off to
+    the serial dispatcher — a shared `LmSnapshot` data class + `captureLmState()`/
+    `applyLmState()` pair in `RecognizerViewModel` formalizes this pattern
+    once for every method that needs it.
+  - **The one real gap a design-review pass found**: this "serial log of
+    additive operations" model breaks down for `MontyOrchestrator.endCharacter()`
+    specifically, since it's a phase transition, not another log entry
+    (its own doc already says so — `postEpisode()`'s real effect is
+    deliberately reserved for it, never fired on a plain `replay`). Left
+    unguarded, a "Done" tap followed by a queued Undo/Clear/stroke would
+    run correctly *ordered* but semantically wrong — retroactively
+    mutating an episode already being finalized, leaving `result` showing
+    a decision for strokes that no longer match what's on screen. Fixed
+    with a synchronous `isEndingCharacter` guard flipped the instant
+    "Done" is pressed, before dispatch — mirroring how `primitiveStroke =
+    points` already instantly locks primitive mode's canvas — and threaded
+    into `DrawingScreen.kt`'s canvas/toolbar gating so the UI locks
+    immediately rather than only after the round trip completes. A
+    correctness fix, not new progress-UI chrome (no spinner was added).
+  - **A second, smaller gap with a free fix**: `RecognizedPanel`'s
+    "Confirm" button had no `enabled` gate, so a fast double-tap during the
+    async round trip could call `orchestrator.teach(...)` twice — the
+    second call, matching against the model it just merged, merges *again*
+    rather than spawning a new variant, silently inflating `exemplarCount`
+    and skewing future merge weighting. Fixed by setting `taughtLabel`
+    synchronously before dispatch in `onTeach`/`onConfirm` (its value is
+    always already known at that point) — closes the double-teach hole and
+    makes the "Taught 'x'" confirmation appear instantly instead of
+    waiting on the round trip, strictly better on both axes. `onConfirm`
+    now simply delegates to `onTeach`, removing what had been duplicated
+    logic.
+  - Design was stress-tested by a review pass before implementation (same
+    practice as every non-trivial change this session) — it verified the
+    `limitedParallelism(1)` FIFO claim against actual library source rather
+    than accepting it on faith, confirmed cancellation/consistency weren't
+    issues, and found both gaps above by tracing the real UI gating code
+    (`DrawingScreen.kt`/`RecognitionResultPanel.kt`), not just the
+    ViewModel in isolation.
+  - `kotlinx-coroutines-android` added as an explicit `app`-only dependency
+    (via `gradle/libs.versions.toml`, matching this catalog's existing
+    explicit-declaration style) — it was already being pulled in
+    transitively through `androidx.lifecycle:lifecycle-viewmodel-ktx`, but
+    this is the first place the app calls coroutine APIs directly rather
+    than only using the `viewModelScope` property, so declaring it
+    explicitly rather than continuing to rely on an undeclared transitive
+    was the right call.
+  - Verified via `./gradlew :lib:test :lib:ktlintCheck :app:ktlintCheck
+    :app:assembleDebug` — `lib` is untouched (all 76 tests still pass),
+    both modules' ktlint clean, `app` compiles and assembles. `app` still
+    has no ViewModel unit-test coverage (established convention) — a real
+    gap for a concurrency-sensitive change specifically, since this is
+    exactly the class of bug automated tests catch and manual testing
+    doesn't, but `kotlinx-coroutines-test` infrastructure wasn't added as
+    part of this fix. No adb/device testing performed (standing project
+    rule); confirming the freeze is actually gone on a real device is the
+    user's to do.

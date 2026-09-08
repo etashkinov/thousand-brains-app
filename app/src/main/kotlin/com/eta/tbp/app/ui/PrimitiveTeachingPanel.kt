@@ -36,6 +36,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun PrimitiveTeachingPanel(
+    hasStroke: Boolean,
     result: RecognitionResult?,
     taughtLabel: String?,
     onTeach: (String) -> Unit,
@@ -57,6 +58,8 @@ fun PrimitiveTeachingPanel(
                 result is RecognitionResult.Recognized ->
                     RecognizedPrimitivePanel(result.label, result.confidence, onConfirm, onCorrect, onRedo)
                 result is RecognitionResult.Ambiguous -> AmbiguousPrimitivePanel(result.labels, onTeach, onRedo)
+                // A stroke is already drawn and locked, but its background evidence/result hasn't arrived yet.
+                hasStroke -> Text("Matching…")
                 else -> Text("Draw one primitive shape (a line, an arc, ...)")
             }
         }

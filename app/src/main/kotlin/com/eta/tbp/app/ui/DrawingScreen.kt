@@ -57,7 +57,7 @@ fun DrawingScreen(
                     DrawingCanvas(
                         strokes = viewModel.strokes,
                         onStrokeCompleted = viewModel::onStrokeCompleted,
-                        enabled = viewModel.result == null,
+                        enabled = viewModel.result == null && !viewModel.isEndingCharacter,
                         primitiveOverlays = viewModel.primitiveOverlays,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -81,6 +81,7 @@ fun DrawingScreen(
             TeachMode.PRIMITIVES -> {
                 EvidenceBars(evidence = viewModel.primitiveEvidence, modifier = Modifier.fillMaxWidth())
                 PrimitiveTeachingPanel(
+                    hasStroke = viewModel.primitiveStroke != null,
                     result = viewModel.primitiveResult,
                     taughtLabel = viewModel.taughtPrimitiveLabel,
                     onTeach = viewModel::onTeachPrimitive,
@@ -104,13 +105,14 @@ fun DrawingScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
+                    val canEdit = !viewModel.isEndingCharacter && viewModel.strokes.isNotEmpty()
                     DrawingToolbar(
                         onUndo = viewModel::onUndo,
                         onClear = viewModel::onClear,
                         onDone = viewModel::onDone,
-                        canUndo = viewModel.strokes.isNotEmpty(),
-                        canClear = viewModel.strokes.isNotEmpty(),
-                        canDone = viewModel.strokes.isNotEmpty(),
+                        canUndo = canEdit,
+                        canClear = canEdit,
+                        canDone = canEdit,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

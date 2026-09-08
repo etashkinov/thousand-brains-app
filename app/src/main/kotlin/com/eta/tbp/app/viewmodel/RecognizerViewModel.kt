@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
@@ -15,6 +16,9 @@ import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
 import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Owns the one long-lived [MontyOrchestrator] (and the brain state behind
@@ -22,12 +26,49 @@ import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
  * plain `remember` state. Phase 7 adds real persistence across process
  * death; until then, teaching is only remembered for this process's life.
  *
- * Uses Compose `mutableStateOf` rather than `StateFlow`: every state change
- * here is synchronous and UI-event-driven (a stroke completing, a button
- * press), so there's no async/multicast need `StateFlow` would justify, and
- * this matches the rest of the app's existing `remember`-based Compose
- * style — just with the state hoisted to a configuration-change-surviving
- * owner instead of a `Composable`'s own memory.
+ * Uses Compose `mutableStateOf` for UI-facing fields, but every touch of
+ * [orchestrator]/[tier2]/[primitiveGraphLM]/[memory] is confined to
+ * [matchingDispatcher] — a single serial background dispatcher, never Main.
+ * These `lib` objects are plain, non-thread-safe mutable Kotlin classes
+ * (`CharacterGraphLM`'s private node buffer, `GraphMemory`'s private map,
+ * etc.); as taught templates/characters accumulate, matching against them
+ * takes long enough to visibly freeze the UI if run on Main, which is what
+ * every method here used to do synchronously. Retrofitting thread-safety
+ * into `lib` itself would be a bigger, more invasive change than confining
+ * every touch to one thread from this side — `lib` stays the plain,
+ * synchronous, deterministic module it's designed to be, and never knows
+ * its caller is async.
+ *
+ * [matchingDispatcher] is `Dispatchers.Default.limitedParallelism(1)`, not
+ * a dedicated single-thread executor — no OS thread to leak/close, and its
+ * internal queue is strictly FIFO (bounded to one active worker at a time)
+ * *relative to actual dispatch order*. That guarantee only holds because
+ * every dispatch here originates from a [viewModelScope] coroutine started
+ * on `Dispatchers.Main.immediate` from an already-Main-thread Compose
+ * callback — `Main.immediate` runs synchronously (no re-dispatch) in that
+ * case, so submission order to [matchingDispatcher] == the order the user
+ * actually triggered these actions in. This would quietly stop being true
+ * if some method here were ever called from a non-Main coroutine.
+ *
+ * Every method that touches `lib` state bundles its mutation *and* its
+ * subsequent read into one [withContext] block (see [captureLmState]) —
+ * never a mutation in one dispatch and a read in a separately-dispatched
+ * one. That distinction matters: if two user actions race close together
+ * (e.g. a stroke completes, then "Undo" is tapped before the first
+ * stroke's matching has finished), both correctly serialize *relative to
+ * each other* on [matchingDispatcher] — but a separately-dispatched read
+ * for the first action could still run on Main concurrently with the
+ * second action's already-started background mutation, a genuine data
+ * race on `lib`'s mutable state. Bundling read with write makes each
+ * user action one atomic hand-off to the serial dispatcher.
+ *
+ * That "serial log of additive operations" model has one exception:
+ * [MontyOrchestrator.endCharacter] is a phase transition, not another log
+ * entry (its own doc: `postEpisode()`'s real effect is deliberately
+ * reserved for it, never fired on a plain `replay`). [isEndingCharacter]
+ * is a synchronous guard flipped the instant "Done" is pressed, before
+ * dispatch, so a queued Undo/Clear/stroke can't retroactively mutate an
+ * episode already being finalized — see [onDone].
  *
  * [TeachMode.PRIMITIVES] is Tier 1 teaching, wired directly against
  * [primitiveGraphLM] rather than through [orchestrator] — the orchestrator
@@ -46,6 +87,7 @@ class RecognizerViewModel : ViewModel() {
     private val primitiveGraphLM = PrimitiveGraphLM()
     private val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
     private val orchestrator = MontyOrchestrator(primitiveGraphLM, tier2)
+    private val matchingDispatcher = Dispatchers.Default.limitedParallelism(1)
 
     /** Strokes drawn so far in the current character, for Compose rendering only. */
     var strokes by mutableStateOf<List<List<Offset>>>(emptyList())
@@ -55,8 +97,12 @@ class RecognizerViewModel : ViewModel() {
     var evidence by mutableStateOf<Map<String, Float>>(emptyMap())
         private set
 
-    /** Set once "Done" is pressed; null while still drawing the current character. */
+    /** Set once "Done" is pressed and its background matching completes; null while still drawing or ending. */
     var result by mutableStateOf<RecognitionResult?>(null)
+        private set
+
+    /** Set synchronously the instant "Done" is pressed, before its async round trip — see the class doc. */
+    var isEndingCharacter by mutableStateOf(false)
         private set
 
     /** Set once a label has been committed (taught/confirmed/corrected) for the current character, until "Next". */
@@ -111,9 +157,12 @@ class RecognizerViewModel : ViewModel() {
     fun onPrimitiveStrokeCompleted(points: List<Offset>) {
         if (primitiveStroke != null) return
         primitiveStroke = points
-        primitiveEvidence = primitiveGraphLM.evaluate(points.toRawPoints())
-        primitiveResult = recognitionResult(primitiveEvidence)
         taughtPrimitiveLabel = null
+        viewModelScope.launch {
+            val newEvidence = withContext(matchingDispatcher) { primitiveGraphLM.evaluate(points.toRawPoints()) }
+            primitiveEvidence = newEvidence
+            primitiveResult = recognitionResult(newEvidence)
+        }
     }
 
     fun onPrimitiveRedo() {
@@ -125,12 +174,18 @@ class RecognizerViewModel : ViewModel() {
     fun onTeachPrimitive(label: String) {
         val stroke = primitiveStroke ?: return
         if (label.isBlank()) return
-        primitiveGraphLM.teach(label, stroke.toRawPoints())
         taughtPrimitiveLabel = label
         primitiveStroke = null
         primitiveEvidence = emptyMap()
         primitiveResult = null
-        refreshLmState() // also updates taughtPrimitiveLabels
+        viewModelScope.launch {
+            val labels =
+                withContext(matchingDispatcher) {
+                    primitiveGraphLM.teach(label, stroke.toRawPoints())
+                    primitiveGraphLM.allLabels()
+                }
+            taughtPrimitiveLabels = labels
+        }
     }
 
     fun onConfirmPrimitive() {
@@ -141,66 +196,119 @@ class RecognizerViewModel : ViewModel() {
     fun onCorrectPrimitive(label: String) = onTeachPrimitive(label)
 
     fun onStrokeCompleted(points: List<Offset>) {
-        if (result != null || taughtPrimitiveLabels.isEmpty()) return
-        orchestrator.stepStroke(points.toRawPoints())
+        if (result != null || isEndingCharacter || taughtPrimitiveLabels.isEmpty()) return
         strokes = strokes + listOf(points)
-        refreshLmState()
+        viewModelScope.launch {
+            val snapshot =
+                withContext(matchingDispatcher) {
+                    orchestrator.stepStroke(points.toRawPoints())
+                    captureLmState()
+                }
+            applyLmState(snapshot)
+        }
     }
 
     fun onUndo() {
-        if (strokes.isEmpty() || result != null) return
-        orchestrator.undoLastStroke()
+        if (strokes.isEmpty() || result != null || isEndingCharacter) return
         strokes = strokes.dropLast(1)
-        refreshLmState()
+        viewModelScope.launch {
+            val snapshot =
+                withContext(matchingDispatcher) {
+                    orchestrator.undoLastStroke()
+                    captureLmState()
+                }
+            applyLmState(snapshot)
+        }
     }
 
     fun onClear() {
-        if (strokes.isEmpty() || result != null) return
-        orchestrator.clearCharacter()
+        if (strokes.isEmpty() || result != null || isEndingCharacter) return
         strokes = emptyList()
-        refreshLmState()
+        viewModelScope.launch {
+            val snapshot =
+                withContext(matchingDispatcher) {
+                    orchestrator.clearCharacter()
+                    captureLmState()
+                }
+            applyLmState(snapshot)
+        }
     }
 
     fun onDone() {
-        if (strokes.isEmpty() || result != null) return
-        result = orchestrator.endCharacter()
+        if (strokes.isEmpty() || result != null || isEndingCharacter) return
+        isEndingCharacter = true
+        viewModelScope.launch {
+            val newResult = withContext(matchingDispatcher) { orchestrator.endCharacter() }
+            result = newResult
+            isEndingCharacter = false
+        }
     }
 
     fun onTeach(label: String) {
-        if (label.isBlank()) return
-        orchestrator.teach(label)
+        if (label.isBlank() || taughtLabel != null) return
         taughtLabel = label
-        refreshLmState()
+        viewModelScope.launch {
+            val snapshot =
+                withContext(matchingDispatcher) {
+                    orchestrator.teach(label)
+                    captureLmState()
+                }
+            applyLmState(snapshot)
+        }
     }
 
     fun onConfirm() {
         val recognized = result as? RecognitionResult.Recognized ?: return
-        orchestrator.teach(recognized.label)
-        taughtLabel = recognized.label
-        refreshLmState()
+        onTeach(recognized.label)
     }
 
     fun onCorrect(label: String) = onTeach(label)
 
     fun onNext() {
-        orchestrator.beginCharacter()
-        strokes = emptyList()
-        evidence = emptyMap()
         result = null
         taughtLabel = null
-        refreshLmState()
+        strokes = emptyList()
+        evidence = emptyMap()
+        viewModelScope.launch {
+            val snapshot =
+                withContext(matchingDispatcher) {
+                    orchestrator.beginCharacter()
+                    captureLmState()
+                }
+            applyLmState(snapshot)
+        }
     }
 
     fun onToggleLmState() {
         showLmState = !showLmState
     }
 
-    private fun refreshLmState() {
-        evidence = tier2.evidenceSnapshot()
-        currentPrimitives = tier2.currentNodes()
-        primitiveOverlays = orchestrator.currentPrimitiveOverlays()
-        learnedGraphs = memory.snapshot()
-        taughtPrimitiveLabels = primitiveGraphLM.allLabels()
+    /** Everything [applyLmState] needs, captured in one [matchingDispatcher] pass — see the class doc for why bundling matters. */
+    private data class LmSnapshot(
+        val evidence: Map<String, Float>,
+        val currentPrimitives: List<GraphNode>,
+        val primitiveOverlays: List<PrimitiveOverlay>,
+        val learnedGraphs: Map<String, List<GraphObjectModel>>,
+        val taughtPrimitiveLabels: Set<String>,
+    )
+
+    /** Must only ever be called from within a [matchingDispatcher] block — reads `lib` state directly. */
+    private fun captureLmState(): LmSnapshot =
+        LmSnapshot(
+            evidence = tier2.evidenceSnapshot(),
+            currentPrimitives = tier2.currentNodes(),
+            primitiveOverlays = orchestrator.currentPrimitiveOverlays(),
+            learnedGraphs = memory.snapshot(),
+            taughtPrimitiveLabels = primitiveGraphLM.allLabels(),
+        )
+
+    /** Applies a snapshot captured via [captureLmState] to Compose state. Safe to call from Main. */
+    private fun applyLmState(snapshot: LmSnapshot) {
+        evidence = snapshot.evidence
+        currentPrimitives = snapshot.currentPrimitives
+        primitiveOverlays = snapshot.primitiveOverlays
+        learnedGraphs = snapshot.learnedGraphs
+        taughtPrimitiveLabels = snapshot.taughtPrimitiveLabels
     }
 }
 
