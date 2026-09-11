@@ -17,7 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 
 /** Small always-visible toggle for [LmStateOverlay] — a debug affordance, not part of the teach/recognize flow itself. */
 @Composable
@@ -46,8 +46,8 @@ fun LmStateToggleButton(
  */
 @Composable
 fun LmStateOverlay(
-    currentPrimitives: List<GraphNode<PrimitiveMeasurement>>,
-    learnedGraphs: Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>,
+    currentPrimitives: List<GraphNode<PrimitiveFeature>>,
+    learnedGraphs: Map<String, List<GraphObjectModel<PrimitiveFeature>>>,
     taughtPrimitiveLabels: Set<String>,
     modifier: Modifier = Modifier,
 ) {
@@ -102,8 +102,8 @@ fun LmStateOverlay(
     }
 }
 
-/** A primitive's taught label plus its size — see [PrimitiveMeasurement]. */
-private fun describe(node: GraphNode<PrimitiveMeasurement>): String = describe(node.feature)
+/** A primitive's taught label plus its size — see [PrimitiveFeature]. */
+private fun describe(node: GraphNode<PrimitiveFeature>): String = describe(node.feature)
 
 /** Formats a single measurement as `label(ext=…)` — shared with [DrawingCanvas]'s on-canvas primitive overlay labels. */
-internal fun describe(measurement: PrimitiveMeasurement): String = "${measurement.label}(ext=${"%.2f".format(measurement.extent)})"
+internal fun describe(measurement: PrimitiveFeature): String = "${measurement.label}(ext=${"%.2f".format(measurement.extent)})"

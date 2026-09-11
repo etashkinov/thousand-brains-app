@@ -1,11 +1,23 @@
+@file:Suppress("ktlint:standard:no-empty-file")
+
 package com.eta.tbp.lib.orchestrator
 
+// Disabled pending a redesign for the new Feature/Location kernel — this
+// class drives PrimitiveSensorModule (see that file's own note) and reads
+// CmpMessage.nonMorphologicalFeatures, which no longer exists now that
+// CmpMessage carries a generic `feature: Feature?` instead. The "city"
+// evidence-graph work (com.eta.tbp.lib.city.CityExplorer) is this domain's
+// analogous orchestrator, built against the current kernel instead of this
+// one. Kotlin nests block comments, so the class body below (including its
+// own KDoc) is safely inert.
+
+/*
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 import com.eta.tbp.lib.sensor.PrimitiveFeatures
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import com.eta.tbp.lib.sensor.PrimitiveSensorModule
 import com.eta.tbp.lib.sensor.RawPoint
 import com.eta.tbp.lib.sensor.RawTouchObservation
@@ -23,7 +35,7 @@ import com.eta.tbp.lib.sensor.StrokePreprocessor
  * rather than an approximation.
  */
 data class PrimitiveOverlay(
-    val measurement: PrimitiveMeasurement,
+    val measurement: PrimitiveFeature,
     val topLeft: RawPoint,
     val bottomRight: RawPoint,
 )
@@ -70,22 +82,22 @@ data class PrimitiveOverlay(
  */
 class MontyOrchestrator(
     primitiveGraphLM: PrimitiveGraphLM,
-    private val tier2: EvidenceGraphLM<PrimitiveMeasurement>,
+    private val tier2: EvidenceGraphLM,
 ) {
     private val primitiveSensorModule = PrimitiveSensorModule(sensorId = SENSOR_ID, primitiveGraphLM = primitiveGraphLM)
     private val strokePoints = mutableListOf<List<RawPoint>>()
     private val primitiveOverlays = mutableListOf<PrimitiveOverlay>()
 
     /**
-     * Per-stroke points as they stood right before normalization (resampled
-     * and smoothed, but still in the original touch-pixel coordinate
-     * space), stashed by [buildNormalizedObservations] purely so
-     * [recordOverlay] can map a primitive's window back to an on-screen
-     * bounding box without inverting the normalization transform
-     * (translate-by-centroid, scale-by-bounding-radius) by hand. A
-     * primitive's window indices are exactly indices into this same array,
-     * so the mapping is exact, not approximate.
-     */
+ * Per-stroke points as they stood right before normalization (resampled
+ * and smoothed, but still in the original touch-pixel coordinate
+ * space), stashed by [buildNormalizedObservations] purely so
+ * [recordOverlay] can map a primitive's window back to an on-screen
+ * bounding box without inverting the normalization transform
+ * (translate-by-centroid, scale-by-bounding-radius) by hand. A
+ * primitive's window indices are exactly indices into this same array,
+ * so the mapping is exact, not approximate.
+ */
     private var rawResampledPerStroke: List<List<RawPoint>> = emptyList()
 
     /** Starts a new character episode, discarding any strokes from a previous one that was never ended. */
@@ -114,11 +126,11 @@ class MontyOrchestrator(
     }
 
     /**
-     * Ends the character episode and returns the recognition decision. The
-     * one point where [EvidenceGraphLM.postEpisode]'s real effect
-     * (snapshotting for [teach]) fires — deliberately not fired on every
-     * [replay], see that method's doc.
-     */
+ * Ends the character episode and returns the recognition decision. The
+ * one point where [EvidenceGraphLM.postEpisode]'s real effect
+ * (snapshotting for [teach]) fires — deliberately not fired on every
+ * [replay], see that method's doc.
+ */
     fun endCharacter(): RecognitionResult {
         tier2.postEpisode()
         return tier2.recognitionResult()
@@ -127,28 +139,28 @@ class MontyOrchestrator(
     fun teach(label: String) = tier2.teach(label)
 
     /**
-     * Every primitive detected so far this episode, as an on-screen
-     * bounding box + measurement — direct introspection for a debug
-     * overlay drawn on the canvas itself, same spirit as
-     * [EvidenceGraphLM.currentNodes]/[EvidenceGraphLM.evidenceSnapshot].
-     * Rebuilt on every [replay], so it's always in sync with [strokePoints].
-     */
+ * Every primitive detected so far this episode, as an on-screen
+ * bounding box + measurement — direct introspection for a debug
+ * overlay drawn on the canvas itself, same spirit as
+ * [EvidenceGraphLM.currentNodes]/[EvidenceGraphLM.evidenceSnapshot].
+ * Rebuilt on every [replay], so it's always in sync with [strokePoints].
+ */
     fun currentPrimitiveOverlays(): List<PrimitiveOverlay> = primitiveOverlays.toList()
 
     /**
-     * Recomputes the whole character from scratch against every stroke in
-     * [strokePoints]. Each stroke's points are segmented *independently* —
-     * a pen lift between strokes is never bridged by a single primitive,
-     * enforced by calling [PrimitiveSensorModule.flushStroke] once per
-     * stroke rather than once for the whole character.
-     * [PrimitiveSensorModule.preEpisode] only resets *its* own
-     * cross-stroke state (the turn-from-previous angle tracking); the
-     * per-stroke `step`/`flushStroke` split below is what keeps one
-     * stroke's points from bleeding into another's segmentation.
-     * `tier2.postEpisode()` deliberately does NOT fire here: its only
-     * consequential effect (snapshotting the completed graph for [teach])
-     * is reserved for the true end of the character, in [endCharacter].
-     */
+ * Recomputes the whole character from scratch against every stroke in
+ * [strokePoints]. Each stroke's points are segmented *independently* —
+ * a pen lift between strokes is never bridged by a single primitive,
+ * enforced by calling [PrimitiveSensorModule.flushStroke] once per
+ * stroke rather than once for the whole character.
+ * [PrimitiveSensorModule.preEpisode] only resets *its* own
+ * cross-stroke state (the turn-from-previous angle tracking); the
+ * per-stroke `step`/`flushStroke` split below is what keeps one
+ * stroke's points from bleeding into another's segmentation.
+ * `tier2.postEpisode()` deliberately does NOT fire here: its only
+ * consequential effect (snapshotting the completed graph for [teach])
+ * is reserved for the true end of the character, in [endCharacter].
+ */
     private fun replay() {
         tier2.preEpisode()
         primitiveSensorModule.preEpisode()
@@ -191,19 +203,19 @@ class MontyOrchestrator(
     }
 
     /**
-     * Resamples every stroke independently (consistent point density per
-     * stroke) but normalizes them together, sharing one centroid/scale
-     * across the whole character — see class doc. Each stroke is smoothed
-     * ([StrokePreprocessor.smooth]) right after resampling, damping real
-     * touch jitter before tangent/curvature estimation would otherwise
-     * amplify it.
-     *
-     * Every stroke contributes the same fixed point count to that shared
-     * estimate regardless of its actual arc length, so a short stroke and a
-     * long one are weighted equally rather than by true size — an accepted
-     * simplification, worth revisiting in Phase 5 if very unevenly-sized
-     * strokes (e.g. a dot plus a long stroke) turn out to matter.
-     */
+ * Resamples every stroke independently (consistent point density per
+ * stroke) but normalizes them together, sharing one centroid/scale
+ * across the whole character — see class doc. Each stroke is smoothed
+ * ([StrokePreprocessor.smooth]) right after resampling, damping real
+ * touch jitter before tangent/curvature estimation would otherwise
+ * amplify it.
+ *
+ * Every stroke contributes the same fixed point count to that shared
+ * estimate regardless of its actual arc length, so a short stroke and a
+ * long one are weighted equally rather than by true size — an accepted
+ * simplification, worth revisiting in Phase 5 if very unevenly-sized
+ * strokes (e.g. a dot plus a long stroke) turn out to matter.
+ */
     private fun buildNormalizedObservations(): List<List<RawTouchObservation>> {
         if (strokePoints.isEmpty()) {
             rawResampledPerStroke = emptyList()
@@ -242,3 +254,4 @@ class MontyOrchestrator(
         const val SENSOR_ID = "primitive-sensor"
     }
 }
+*/

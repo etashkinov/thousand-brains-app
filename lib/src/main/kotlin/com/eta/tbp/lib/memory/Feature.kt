@@ -11,14 +11,28 @@ package com.eta.tbp.lib.memory
  * should act as a hard veto (like a taught label) returns [Float.POSITIVE_INFINITY]
  * for a mismatch instead of needing its own boolean.
  */
-interface EvidenceFeature<F : EvidenceFeature<F>> {
+interface Feature {
+    val label: String
+
     /** 0 = identical; [Float.POSITIVE_INFINITY] if [other] should never be treated as a match. */
-    fun difference(other: F): Float
+    fun difference(other: Feature): Float
 
     /** Weighted merge of this feature (weight [selfWeight]) with [other], normalized by [totalWeight]. */
     fun mergedWith(
-        other: F,
+        other: Feature,
         selfWeight: Float,
         totalWeight: Float,
-    ): F
+    ): Feature
+
+    object Infinity : Feature {
+        override val label = "INFINITY"
+
+        override fun difference(other: Feature) = Float.POSITIVE_INFINITY
+
+        override fun mergedWith(
+            other: Feature,
+            selfWeight: Float,
+            totalWeight: Float,
+        ) = this
+    }
 }

@@ -1,5 +1,20 @@
+@file:Suppress("ktlint:standard:no-empty-file")
+
 package com.eta.tbp.lib.sensor
 
+// Disabled pending a redesign for the new Feature/Location kernel (see
+// CmpMessage/GraphNode's move away from MorphologicalFeatures/
+// PrimitiveFeatures and FloatArray locations to the generic Feature/
+// Location interfaces): this class still constructs CmpMessage with the
+// old morphologicalFeatures/nonMorphologicalFeatures params and implements
+// an already-deleted PrimitiveFeatures interface, so it no longer compiles.
+// The "city" evidence-graph work (see com.eta.tbp.lib.city) deliberately
+// left the digit-stroke pipeline (this class, MontyOrchestrator, and their
+// tests) commented out rather than porting it, per this branch's direction
+// — see MontyOrchestrator.kt's matching note. Kotlin nests block comments,
+// so the class body below (including its own KDoc) is safely inert.
+
+/*
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.MorphologicalFeatures
 import com.eta.tbp.lib.cmp.SenderType
@@ -58,8 +73,7 @@ class PrimitiveSensorModule(
         strokeBuffer.add(observation)
         return CmpMessage(
             location = null,
-            morphologicalFeatures = null,
-            nonMorphologicalFeatures = Unit,
+            feature = null,
             confidence = 0f,
             passMessage = false,
             senderId = sensorId,
@@ -78,11 +92,11 @@ class PrimitiveSensorModule(
     }
 
     /**
-     * Runs [StrokeSegmenter]'s global search over every observation buffered
-     * by [step] since the last [flushStroke] (or [preEpisode]) call, and
-     * returns one [CmpMessage] per chosen window, in order. Clears the
-     * buffer for the next stroke. Empty if nothing was buffered.
-     */
+ * Runs [StrokeSegmenter]'s global search over every observation buffered
+ * by [step] since the last [flushStroke] (or [preEpisode]) call, and
+ * returns one [CmpMessage] per chosen window, in order. Clears the
+ * buffer for the next stroke. Empty if nothing was buffered.
+ */
     fun flushStroke(strokeIndex: Int): List<CmpMessage> {
         val observations = strokeBuffer.toList()
         strokeBuffer.clear()
@@ -100,22 +114,22 @@ class PrimitiveSensorModule(
     }
 
     /**
-     * The *log* of [primitiveGraphLM]'s best evidence for the candidate
-     * window `[start, end)` — not the raw evidence. This matters: raw
-     * evidence for a clean match against a taught line sits close to 1.0
-     * regardless of the window's length (any sub-segment of a straight line
-     * is itself a straight line), so summing raw evidence directly would
-     * make [StrokeSegmenter] always prefer more, shorter windows whenever
-     * each one *also* scores well — no [SEGMENT_PENALTY] can fix that on
-     * its own, since a small positive-per-window gain still always wins by
-     * using more of them. Log-evidence caps out at 0 for a perfect match, so
-     * covering the same span with more equally-good windows sums to *the
-     * same* total (not more) — exactly how a real language model's word
-     * segmentation naturally prefers fewer, better-fitting words without
-     * needing to be told to. [SEGMENT_PENALTY] only has to break near-ties
-     * toward fewer primitives after that, not fight a runaway sum.
-     * [MIN_EVIDENCE] avoids `ln(0)`.
-     */
+ * The *log* of [primitiveGraphLM]'s best evidence for the candidate
+ * window `[start, end)` — not the raw evidence. This matters: raw
+ * evidence for a clean match against a taught line sits close to 1.0
+ * regardless of the window's length (any sub-segment of a straight line
+ * is itself a straight line), so summing raw evidence directly would
+ * make [StrokeSegmenter] always prefer more, shorter windows whenever
+ * each one *also* scores well — no [SEGMENT_PENALTY] can fix that on
+ * its own, since a small positive-per-window gain still always wins by
+ * using more of them. Log-evidence caps out at 0 for a perfect match, so
+ * covering the same span with more equally-good windows sums to *the
+ * same* total (not more) — exactly how a real language model's word
+ * segmentation naturally prefers fewer, better-fitting words without
+ * needing to be told to. [SEGMENT_PENALTY] only has to break near-ties
+ * toward fewer primitives after that, not fight a runaway sum.
+ * [MIN_EVIDENCE] avoids `ln(0)`.
+ */
     private fun windowScore(
         observations: List<RawTouchObservation>,
         start: Int,
@@ -143,7 +157,7 @@ class PrimitiveSensorModule(
         val windowPoints = windowRawPoints(observations, start, end)
         val evidence = primitiveGraphLM.evaluate(windowPoints)
         val label = evidence.maxByOrNull { it.value }?.key ?: UNTAUGHT_LABEL
-        val measurement = PrimitiveMeasurement(label = label, extent = chordLength(windowPoints))
+        val measurement = PrimitiveFeature(label = label, extent = chordLength(windowPoints))
 
         val absoluteAngle = circularMean(windowObservations.map { it.tangentAngle })
         val relativeAngle = angleDifference(absoluteAngle, previousExitAngle)
@@ -177,14 +191,14 @@ class PrimitiveSensorModule(
         return sqrt(dx * dx + dy * dy)
     }
 
-    private fun centroid(points: List<RawPoint>): FloatArray {
+    private fun centroid(points: List<RawPoint>): FloatLocation {
         var sumX = 0f
         var sumY = 0f
         for (point in points) {
             sumX += point.x
             sumY += point.y
         }
-        return floatArrayOf(sumX / points.size, sumY / points.size)
+        return FloatLocation(sumX / points.size, sumY / points.size)
     }
 
     private fun circularMean(angles: List<Float>): Float {
@@ -233,3 +247,4 @@ class PrimitiveSensorModule(
         const val SEGMENT_PENALTY = 0.05f
     }
 }
+*/

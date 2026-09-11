@@ -1,51 +1,30 @@
 package com.eta.tbp.lib.cmp
 
+import com.eta.tbp.lib.memory.Feature
+import com.eta.tbp.lib.memory.Location
+
 /** Mirrors Monty CMP's sender kinds: a Sensor Module or a Learning Module. */
 enum class SenderType { SM, LM }
 
 /**
- * Mirrors Monty's morphological-features payload: pose vectors plus whether
- * the pose is fully determined yet. 2x2 in our 2D domain (Monty: 3x3 for 3D).
- */
-data class MorphologicalFeatures(
-    val poseVectors: Array<FloatArray>,
-    val poseFullyDefined: Boolean,
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-
-        other as MorphologicalFeatures
-
-        if (poseFullyDefined != other.poseFullyDefined) return false
-        if (!poseVectors.contentDeepEquals(other.poseVectors)) return false
-
-        return true
-    }
-
-    override fun hashCode(): Int {
-        var result = poseFullyDefined.hashCode()
-        result = 31 * result + poseVectors.contentDeepHashCode()
-        return result
-    }
-}
-
-/**
  * Mirrors `tbp.monty.cmp.Message` — the single message format exchanged
  * between every Sensor/Learning Module, feed-forward or lateral (voting).
+ * [location]/[feature] carry whatever payload the producer's domain needs —
+ * a stroke's [com.eta.tbp.lib.sensor.FloatLocation]/
+ * [com.eta.tbp.lib.sensor.PrimitiveFeature] or a city's
+ * [com.eta.tbp.lib.city.MapLocation]/[com.eta.tbp.lib.city.MapFeature] — via
+ * the generic [Location]/[Feature] interfaces, rather than this class
+ * knowing about pose vectors or any other domain-specific shape directly.
  */
 open class CmpMessage(
-    val location: FloatArray?,
-    val morphologicalFeatures: MorphologicalFeatures?,
-    val nonMorphologicalFeatures: Any,
+    val location: Location?,
+    val feature: Feature?,
     val confidence: Float,
     val passMessage: Boolean,
     val senderId: String,
     val senderType: SenderType,
     val processFeaturesInLm: Boolean,
 ) {
-    fun getPoseVectors(): Array<FloatArray>? = morphologicalFeatures?.poseVectors
-
     fun isFromSm(): Boolean = senderType == SenderType.SM
 }
 
@@ -54,9 +33,8 @@ open class CmpMessage(
  * branching. Present as a class shape but unused until then.
  */
 class CmpGoal(
-    location: FloatArray?,
-    morphologicalFeatures: MorphologicalFeatures?,
-    nonMorphologicalFeatures: Any,
+    location: Location?,
+    feature: Feature?,
     confidence: Float,
     passMessage: Boolean,
     senderId: String,
@@ -66,8 +44,7 @@ class CmpGoal(
     val info: Map<String, Any>? = null,
 ) : CmpMessage(
         location,
-        morphologicalFeatures,
-        nonMorphologicalFeatures,
+        feature,
         confidence,
         passMessage,
         senderId,

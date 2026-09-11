@@ -1,12 +1,17 @@
+@file:Suppress("ktlint:standard:no-empty-file")
+
 package com.eta.tbp.lib.orchestrator
 
+// Disabled along with MontyOrchestrator.kt itself — see that file's note.
+
+/*
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 import com.eta.tbp.lib.sensor.PrimitiveFeatures
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import com.eta.tbp.lib.sensor.RawPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -26,9 +31,9 @@ class MontyOrchestratorTest {
             RawPoint(cos(angle).toFloat(), sin(angle).toFloat())
         }
 
-    private fun featureOf(message: CmpMessage): PrimitiveMeasurement = (message.nonMorphologicalFeatures as PrimitiveFeatures).measurement
+    private fun featureOf(message: CmpMessage): PrimitiveFeature = (message.nonMorphologicalFeatures as PrimitiveFeatures).measurement
 
-    private fun newOrchestrator(memory: GraphMemory<PrimitiveMeasurement> = GraphMemory()): MontyOrchestrator {
+    private fun newOrchestrator(memory: GraphMemory<PrimitiveFeature> = GraphMemory()): MontyOrchestrator {
         val primitiveGraphLM = PrimitiveGraphLM()
         primitiveGraphLM.teach("line", canonicalLine())
         primitiveGraphLM.teach("arc", canonicalArc())
@@ -317,3 +322,4 @@ class MontyOrchestratorTest {
         }
     }
 }
+*/

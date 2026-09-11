@@ -1,5 +1,6 @@
 package com.eta.tbp.lib.util
 
+import com.eta.tbp.lib.memory.Location
 import kotlin.math.abs
 import kotlin.math.sqrt
 

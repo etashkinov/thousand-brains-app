@@ -1,20 +1,16 @@
 package com.eta.tbp.lib.memory
 
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-
 /**
  * `Map<label, variants>` — multiple [GraphObjectModel]s can share a label
  * (natural handwriting variation: different stroke order/count for the
  * "same" character shouldn't force-merge into one corrupted model).
  */
-class GraphMemory<F : EvidenceFeature<F>> {
-    private val models = mutableMapOf<String, MutableList<GraphObjectModel<F>>>()
+class GraphMemory {
+    private val models = mutableMapOf<String, MutableList<GraphObjectModel>>()
 
     /** Mirrors Monty's `detect_new_object_k_steps` — the merge-vs-spawn decision. */
     fun detectNewObject(
-        candidate: GraphObjectModel<F>,
+        candidate: GraphObjectModel,
         label: String,
     ): Boolean {
         val existing = models[label] ?: return true
@@ -23,7 +19,7 @@ class GraphMemory<F : EvidenceFeature<F>> {
     }
 
     fun addOrMerge(
-        candidate: GraphObjectModel<F>,
+        candidate: GraphObjectModel,
         label: String,
     ) {
         val variants = models.getOrPut(label) { mutableListOf() }
@@ -37,22 +33,22 @@ class GraphMemory<F : EvidenceFeature<F>> {
         }
     }
 
-    fun candidatesForLabel(label: String): List<GraphObjectModel<F>> = models[label] ?: emptyList()
+    fun candidatesForLabel(label: String): List<GraphObjectModel> = models[label] ?: emptyList()
 
     fun allLabels(): Set<String> = models.keys
 
-    fun snapshot(): Map<String, List<GraphObjectModel<F>>> = models.mapValues { it.value.toList() }
+    fun snapshot(): Map<String, List<GraphObjectModel>> = models.mapValues { it.value.toList() }
 
-    fun restore(snapshot: Map<String, List<GraphObjectModel<F>>>) {
+    fun restore(snapshot: Map<String, List<GraphObjectModel>>) {
         models.clear()
         snapshot.forEach { (label, variants) -> models[label] = variants.toMutableList() }
     }
 
-    /** Averages [candidate]'s nodes (aligned to [target]'s own order) into the stored model. */
+    /** Averages [candidate]'s nodes (aligned to [target]'s own order) into the stored model, via each node's own [Location.mergedWith]/[Feature.mergedWith]. */
     private fun mergeInto(
-        target: GraphObjectModel<F>,
-        candidate: GraphObjectModel<F>,
-    ): GraphObjectModel<F> {
+        target: GraphObjectModel,
+        candidate: GraphObjectModel,
+    ): GraphObjectModel {
         val alignedWindow = GraphMatcher.bestAlignedWindow(target, candidate) ?: return target
         val existingWeight = target.exemplarCount.toFloat()
         val totalWeight = existingWeight + 1f
@@ -61,15 +57,7 @@ class GraphMemory<F : EvidenceFeature<F>> {
             target.nodes.mapIndexed { i, storedNode ->
                 val candidateNode = alignedWindow[i]
                 storedNode.copy(
-                    location =
-                        weightedAverage(storedNode.location, existingWeight, candidateNode.location, totalWeight),
-                    absoluteAngle =
-                        weightedAverageAngle(
-                            storedNode.absoluteAngle,
-                            existingWeight,
-                            candidateNode.absoluteAngle,
-                            totalWeight,
-                        ),
+                    location = storedNode.location.mergedWith(candidateNode.location, existingWeight, totalWeight),
                     feature = storedNode.feature.mergedWith(candidateNode.feature, existingWeight, totalWeight),
                 )
             }
@@ -79,29 +67,6 @@ class GraphMemory<F : EvidenceFeature<F>> {
             edges = edgeChainOf(mergedNodes),
             exemplarCount = target.exemplarCount + 1,
         )
-    }
-
-    private fun weightedAverage(
-        stored: FloatArray,
-        storedWeight: Float,
-        candidate: FloatArray,
-        totalWeight: Float,
-    ): FloatArray =
-        floatArrayOf(
-            (stored[0] * storedWeight + candidate[0]) / totalWeight,
-            (stored[1] * storedWeight + candidate[1]) / totalWeight,
-        )
-
-    /** Circular weighted mean via the sin/cos trick, so averaging never breaks at the +-PI wraparound. */
-    private fun weightedAverageAngle(
-        stored: Float,
-        storedWeight: Float,
-        candidate: Float,
-        totalWeight: Float,
-    ): Float {
-        val x = (cos(stored) * storedWeight + cos(candidate)) / totalWeight
-        val y = (sin(stored) * storedWeight + sin(candidate)) / totalWeight
-        return atan2(y, x)
     }
 
     companion object {

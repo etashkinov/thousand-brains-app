@@ -1,6 +1,7 @@
 package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
+import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,19 +11,18 @@ class GraphMatcherTest {
         id: Int,
         x: Float,
         y: Float,
-        angle: Float,
-        feature: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
-    ) = GraphNode(id, floatArrayOf(x, y), angle, feature)
+        feature: PrimitiveFeature = PrimitiveFeature(label = "line", angle = 0f, extent = 1f),
+    ) = GraphNode(id, FloatLocation(x, y), feature)
 
     /** A simple 3-node "staircase": line, arc, line. */
-    private fun staircase(): List<GraphNode<PrimitiveMeasurement>> =
+    private fun staircase(): List<GraphNode> =
         listOf(
-            node(0, -1f, 0f, 0f, PrimitiveMeasurement(label = "line", extent = 1f)),
-            node(1, 0f, 0f, 1.5f, PrimitiveMeasurement(label = "arc", extent = 1f)),
-            node(2, 1f, 1f, 0.2f, PrimitiveMeasurement(label = "line", extent = 1f)),
+            node(0, -1f, 0f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
+            node(1, 0f, 0f, PrimitiveFeature(label = "arc", angle = 0f, extent = 1f)),
+            node(2, 1f, 1f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
         )
 
-    private fun modelOf(nodes: List<GraphNode<PrimitiveMeasurement>>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
+    private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
 
     @Test
     fun `identical graphs score near 1`() {
@@ -32,7 +32,20 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `same graph starting from a different node scores near 1`() {
+    fun `a translated instance of the same graph scores near 1`() {
+        val nodes = staircase()
+        val translated =
+            listOf(
+                node(0, 49f, -20f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
+                node(1, 50f, -20f, PrimitiveFeature(label = "arc", angle = 0f, extent = 1f)),
+                node(2, 51f, -19f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
+            )
+        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(translated))
+        assertTrue("expected near 1.0 but was $score", score > 0.99f)
+    }
+
+    @Test
+    fun `the same graph listed starting from a different node scores near 1`() {
         val nodes = staircase()
         val rotated = nodes.drop(1) + nodes.take(1)
         val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(rotated))
@@ -40,35 +53,55 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `same graph traversed in reverse scores near 1`() {
+    fun `the same graph listed in reverse order scores near 1`() {
         val nodes = staircase()
         val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(nodes.reversed()))
         assertTrue("expected near 1.0 but was $score", score > 0.99f)
     }
 
     @Test
-    fun `different primitive label sequence scores zero`() {
+    fun `no feature overlap at all scores zero`() {
         val nodes = staircase()
-        val differentLabels = listOf(node(0, -1f, 0f, 0f), node(1, 0f, 0f, 1.5f), node(2, 1f, 1f, 0.2f))
-        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(differentLabels))
+        val disjointLabels =
+            listOf(
+                node(0, -1f, 0f, PrimitiveFeature(label = "square", angle = 0f, extent = 1f)),
+                node(1, 0f, 0f, PrimitiveFeature(label = "square", angle = 0f, extent = 1f)),
+                node(2, 1f, 1f, PrimitiveFeature(label = "square", angle = 0f, extent = 1f)),
+            )
+        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(disjointLabels))
         assertEquals(0f, score, 1e-6f)
     }
 
     @Test
-    fun `very different angles and positions score well below the merge threshold`() {
+    fun `a rearranged but still feature-compatible sequence is not automatically zero`() {
+        // Permuting which position holds "line" vs "arc" doesn't itself
+        // disqualify a match: an anchor pair only needs to be individually
+        // feature-compatible, not the whole sequence in lockstep -- that
+        // permutation tolerance is deliberate (a city explorer can visit
+        // cells in any order). A genuine mismatch needs disjoint features
+        // entirely (see the test above) or wildly different relative
+        // positions (see the "very different relative positions" test).
+        val nodes = staircase()
+        val relabeled =
+            listOf(
+                node(0, -1f, 0f, PrimitiveFeature(label = "arc", angle = 0f, extent = 1f)),
+                node(1, 0f, 0f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
+                node(2, 1f, 1f, PrimitiveFeature(label = "arc", angle = 0f, extent = 1f)),
+            )
+        val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(relabeled))
+        assertTrue("expected some nonzero score from the remaining feature-compatible pairs but was $score", score > 0f)
+    }
+
+    @Test
+    fun `very different relative positions score well below the merge threshold`() {
         val nodes = staircase()
         val farOff =
             listOf(
-                node(0, 5f, 5f, 3f, PrimitiveMeasurement(label = "line", extent = 1f)),
-                node(1, -5f, -5f, -2f, PrimitiveMeasurement(label = "arc", extent = 1f)),
-                node(2, 8f, -3f, 1f, PrimitiveMeasurement(label = "line", extent = 1f)),
+                node(0, 5f, 5f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
+                node(1, -5f, -5f, PrimitiveFeature(label = "arc", angle = 0f, extent = 1f)),
+                node(2, 8f, -3f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
             )
         val score = GraphMatcher.matchScore(modelOf(nodes), modelOf(farOff))
-        // Angle, position and size error are averaged, not multiplied, so a
-        // position-only catastrophic mismatch caps out well above zero (here,
-        // size still matches perfectly by construction) — what actually
-        // matters is staying clearly under GraphMemory.MERGE_THRESHOLD (0.75),
-        // not near zero.
         assertTrue("expected a score well below the merge threshold but was $score", score < 0.75f)
     }
 
@@ -96,18 +129,13 @@ class GraphMatcherTest {
 
     @Test
     fun `a candidate with the same shape but a different extent scores below an exact size match`() {
-        // Same positions, angles, and primitive-label sequence -- only the
-        // reported extent differs. Before PrimitiveMeasurement existed, a
-        // short primitive and a long one pointing the same way were
-        // indistinguishable to GraphMatcher; this is the regression test
-        // that the size dimension actually affects the score now.
         val nodes = staircase()
         val exactMatch = staircase()
         val differentExtent =
             listOf(
-                node(0, -1f, 0f, 0f, PrimitiveMeasurement(label = "line", extent = 5f)),
-                node(1, 0f, 0f, 1.5f, PrimitiveMeasurement(label = "arc", extent = 5f)),
-                node(2, 1f, 1f, 0.2f, PrimitiveMeasurement(label = "line", extent = 5f)),
+                node(0, -1f, 0f, PrimitiveFeature(label = "line", angle = 0f, extent = 5f)),
+                node(1, 0f, 0f, PrimitiveFeature(label = "arc", angle = 0f, extent = 5f)),
+                node(2, 1f, 1f, PrimitiveFeature(label = "line", angle = 0f, extent = 5f)),
             )
 
         val exactScore = GraphMatcher.matchScore(modelOf(nodes), modelOf(exactMatch))
@@ -120,10 +148,17 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `bestAlignedWindow reorders stored nodes to match the candidate's own order`() {
+    fun `bestAlignedWindow reorders the candidate's nodes to match the target's own order`() {
         val nodes = staircase()
         val reversedCandidate = modelOf(nodes.reversed())
         val window = GraphMatcher.bestAlignedWindow(modelOf(nodes), reversedCandidate)
         assertEquals(nodes.reversed().map { it.feature }, window?.map { it.feature })
+    }
+
+    @Test
+    fun `bestAlignedWindow is null when nothing is feature-compatible`() {
+        val nodes = staircase()
+        val noOverlap = listOf(node(0, -1f, 0f, PrimitiveFeature(label = "unrelated", angle = 0f, extent = 1f)))
+        assertEquals(null, GraphMatcher.bestAlignedWindow(modelOf(nodes), modelOf(noOverlap)))
     }
 }

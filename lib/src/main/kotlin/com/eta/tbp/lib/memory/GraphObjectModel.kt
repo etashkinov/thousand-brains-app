@@ -1,43 +1,37 @@
 package com.eta.tbp.lib.memory
 
 /**
- * One primitive, as stored in a character's graph. [absoluteAngle] is the
- * primitive's tangent angle in the *character's own drawing-order frame*
- * (cumulative from the first primitive, not the turn-from-previous value
- * [com.eta.tbp.lib.lm.PrimitiveLM] emits) — [GraphMatcher] re-baselines it
- * per alignment attempt, which only works if the starting reference is
- * consistent across every node, not anchored to whichever primitive
- * happened to be first when this was taught. [feature] carries whatever
- * this graph's node payload is (e.g. a [com.eta.tbp.lib.sensor.PrimitiveMeasurement]'s
- * type and size/shape) — generic over [F] so [GraphNode] isn't tied to one
- * tier's feature type; see [EvidenceFeature] for what [GraphMatcher]/
- * [GraphMemory] need [F] to support.
+ * One node in a taught graph — a primitive in a character's graph, or a
+ * visited cell in a city's graph. [location]/[feature] are the generic
+ * [Location]/[Feature] interfaces rather than a fixed shape, so [GraphNode]
+ * isn't tied to one tier's payload type; see [Feature] and [Location] for
+ * what [GraphMatcher]/[GraphMemory] need each to support. [GraphMatcher]
+ * re-bases every node's [location] to a shared anchor per alignment attempt
+ * rather than comparing stored positions directly, since neither a stroke's
+ * nor a city's starting reference point is fixed across exemplars.
  */
-data class GraphNode<F : Any>(
+data class GraphNode(
     val id: Int,
-    val location: FloatArray,
-    val absoluteAngle: Float,
-    val feature: F,
+    val location: Location,
+    val feature: Feature,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
 
-        other as GraphNode<*>
+        other as GraphNode
 
         if (id != other.id) return false
-        if (absoluteAngle != other.absoluteAngle) return false
         if (feature != other.feature) return false
-        if (!location.contentEquals(other.location)) return false
+        if (location != other.location) return false
 
         return true
     }
 
     override fun hashCode(): Int {
         var result = id
-        result = 31 * result + absoluteAngle.hashCode()
         result = 31 * result + feature.hashCode()
-        result = 31 * result + location.contentHashCode()
+        result = 31 * result + location.hashCode()
         return result
     }
 }
@@ -46,7 +40,7 @@ data class GraphNode<F : Any>(
 data class GraphEdge(
     val fromNode: Int,
     val toNode: Int,
-    val displacement: FloatArray,
+    val displacement: Location,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -56,7 +50,7 @@ data class GraphEdge(
 
         if (fromNode != other.fromNode) return false
         if (toNode != other.toNode) return false
-        if (!displacement.contentEquals(other.displacement)) return false
+        if (displacement != other.displacement) return false
 
         return true
     }
@@ -64,26 +58,28 @@ data class GraphEdge(
     override fun hashCode(): Int {
         var result = fromNode
         result = 31 * result + toNode
-        result = 31 * result + displacement.contentHashCode()
+        result = 31 * result + displacement.hashCode()
         return result
     }
 }
 
-data class GraphObjectModel<F : Any>(
+data class GraphObjectModel(
     val label: String,
-    val nodes: List<GraphNode<F>>,
+    val nodes: List<GraphNode>,
     val edges: List<GraphEdge>,
     var exemplarCount: Int,
-)
+) {
+    fun find(feature: Feature) = nodes.filter { node -> node.feature == feature }
+}
 
 /** Builds the sequential edge chain over [nodes] in the order they're given. */
-fun <F : Any> edgeChainOf(nodes: List<GraphNode<F>>): List<GraphEdge> =
+fun edgeChainOf(nodes: List<GraphNode>): List<GraphEdge> =
     (0 until nodes.size - 1).map { i ->
         val from = nodes[i]
         val to = nodes[i + 1]
         GraphEdge(
             fromNode = from.id,
             toNode = to.id,
-            displacement = floatArrayOf(to.location[0] - from.location[0], to.location[1] - from.location[1]),
+            displacement = to.location.displacement(from.location),
         )
     }

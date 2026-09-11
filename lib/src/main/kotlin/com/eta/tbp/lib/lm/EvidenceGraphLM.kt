@@ -2,13 +2,12 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
-import com.eta.tbp.lib.memory.EvidenceFeature
+import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.GraphMatcher
 import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.edgeChainOf
-import kotlin.math.atan2
 
 /**
  * Tier 2: builds a character's graph from the primitive stream coming from
@@ -17,7 +16,7 @@ import kotlin.math.atan2
  * node feature payload [F] — real Monty's own `EvidenceGraphLM` is one class
  * reused at every hierarchy level via constructor config, not type
  * branching; this class mirrors that shape. Today's app still has exactly
- * one real instantiation (`F = `[com.eta.tbp.lib.sensor.PrimitiveMeasurement],
+ * one real instantiation (`F = `[com.eta.tbp.lib.sensor.PrimitiveFeature],
  * wired up in `RecognizerViewModel`) — [com.eta.tbp.lib.lm.PrimitiveGraphLM]
  * (Tier 1) deliberately stays a separate, non-generic class; see
  * IMPLEMENTATION_PLAN.md's "why aren't PrimitiveGraphLM and (this class) one
@@ -57,14 +56,12 @@ import kotlin.math.atan2
  * [teach] is this app's honest equivalent of that ground truth, not a
  * deviation from the port.
  */
-class EvidenceGraphLM<F : EvidenceFeature<F>>(
+class EvidenceGraphLM(
     override val lmId: String,
-    private val memory: GraphMemory<F>,
-    private val featureOf: (CmpMessage) -> F,
-) : LearningModule<Map<String, List<GraphObjectModel<F>>>> {
-    private val nodeBuffer = mutableListOf<GraphNode<F>>()
-    private var runningAbsoluteAngle = 0f
-    private var lastCompletedNodes: List<GraphNode<F>>? = null
+    private val memory: GraphMemory,
+) : LearningModule<Map<String, List<GraphObjectModel>>> {
+    private val nodeBuffer = mutableListOf<GraphNode>()
+    private var lastCompletedNodes: List<GraphNode>? = null
 
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
@@ -83,8 +80,7 @@ class EvidenceGraphLM<F : EvidenceFeature<F>>(
         val topEntry = evidenceSnapshot().maxByOrNull { it.value } ?: return null
         return CmpMessage(
             location = null,
-            morphologicalFeatures = null,
-            nonMorphologicalFeatures = topEntry.key,
+            feature = null,
             confidence = topEntry.value,
             passMessage = true,
             senderId = lmId,
@@ -113,11 +109,10 @@ class EvidenceGraphLM<F : EvidenceFeature<F>>(
      * message carries. Empty before any stroke completes or right after
      * [preEpisode].
      */
-    fun currentNodes(): List<GraphNode<F>> = nodeBuffer.toList()
+    fun currentNodes(): List<GraphNode> = nodeBuffer.toList()
 
     override fun preEpisode() {
         nodeBuffer.clear()
-        runningAbsoluteAngle = 0f
     }
 
     override fun postEpisode() {
@@ -130,9 +125,9 @@ class EvidenceGraphLM<F : EvidenceFeature<F>>(
         // No behavioral difference yet: v1 has no training-only bookkeeping.
     }
 
-    override fun state(): Map<String, List<GraphObjectModel<F>>> = memory.snapshot()
+    override fun state(): Map<String, List<GraphObjectModel>> = memory.snapshot()
 
-    override fun loadState(state: Map<String, List<GraphObjectModel<F>>>) = memory.restore(state)
+    override fun loadState(state: Map<String, List<GraphObjectModel>>) = memory.restore(state)
 
     /** Labels the most recently completed drawing and folds it into memory. No-op before any stroke completes. */
     fun teach(label: String) {
@@ -146,21 +141,9 @@ class EvidenceGraphLM<F : EvidenceFeature<F>>(
     /** Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI decision — see the top-level [recognitionResult]. */
     fun recognitionResult(): RecognitionResult = recognitionResult(evidenceSnapshot())
 
-    private fun toGraphNode(message: CmpMessage): GraphNode<F> {
-        val location = requireNotNull(message.location) { "Primitive messages must carry a location" }
-        val poseVectors = requireNotNull(message.getPoseVectors()) { "Primitive messages must carry a pose" }
-        val relativeAngle = atan2(poseVectors[0][1], poseVectors[0][0])
-
-        // PrimitiveSensorModule's relativeAngle is a turn-from-previous encoding;
-        // summing it back up reconstructs the same absolute-angle sequence
-        // PrimitiveSensorModule itself tracked internally (see its emitPrimitive).
-        runningAbsoluteAngle += relativeAngle
-
-        return GraphNode(
-            id = nodeBuffer.size,
-            location = location.copyOf(),
-            absoluteAngle = runningAbsoluteAngle,
-            feature = featureOf(message),
-        )
+    private fun toGraphNode(message: CmpMessage): GraphNode {
+        val location = requireNotNull(message.location) { "Messages fed into matchingStep must carry a location" }
+        val feature = requireNotNull(message.feature) { "Messages fed into matchingStep must carry a feature" }
+        return GraphNode(id = nodeBuffer.size, location = location, feature = feature)
     }
 }

@@ -1,21 +1,17 @@
 package com.eta.tbp.lib.cmp
 
+import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CmpMessageTest {
     private fun sampleMessage(senderType: SenderType = SenderType.SM) =
         CmpMessage(
-            location = floatArrayOf(1f, 2f),
-            morphologicalFeatures =
-                MorphologicalFeatures(
-                    poseVectors = arrayOf(floatArrayOf(1f, 0f), floatArrayOf(0f, 1f)),
-                    poseFullyDefined = true,
-                ),
-            nonMorphologicalFeatures = "line",
+            location = FloatLocation(1f, 2f),
+            feature = PrimitiveFeature(label = "line", angle = 0f, extent = 1f),
             confidence = 0.9f,
             passMessage = true,
             senderId = "sm-0",
@@ -24,21 +20,17 @@ class CmpMessageTest {
         )
 
     @Test
-    fun `nonMorphologicalFeatures carries the producer's own typed payload`() {
+    fun `carries the producer's own location and feature payload`() {
         val message = sampleMessage()
-        assertEquals("line", message.nonMorphologicalFeatures)
+        assertEquals(FloatLocation(1f, 2f), message.location)
+        assertEquals(PrimitiveFeature(label = "line", angle = 0f, extent = 1f), message.feature)
     }
 
     @Test
-    fun `getPoseVectors returns the morphological pose vectors`() {
-        val message = sampleMessage()
-        assertEquals(2, message.getPoseVectors()?.size)
-    }
-
-    @Test
-    fun `getPoseVectors is null when morphological features are absent`() {
-        val message = sampleMessage().copyWithoutMorphology()
-        assertNull(message.getPoseVectors())
+    fun `location and feature are optional`() {
+        val message = sampleMessage().let { it.copy(location = null, feature = null) }
+        assertEquals(null, message.location)
+        assertEquals(null, message.feature)
     }
 
     @Test
@@ -47,15 +39,16 @@ class CmpMessageTest {
         assertFalse(sampleMessage(SenderType.LM).isFromSm())
     }
 
-    private fun CmpMessage.copyWithoutMorphology() =
-        CmpMessage(
-            location = location,
-            morphologicalFeatures = null,
-            nonMorphologicalFeatures = nonMorphologicalFeatures,
-            confidence = confidence,
-            passMessage = passMessage,
-            senderId = senderId,
-            senderType = senderType,
-            processFeaturesInLm = processFeaturesInLm,
-        )
+    private fun CmpMessage.copy(
+        location: com.eta.tbp.lib.memory.Location? = this.location,
+        feature: com.eta.tbp.lib.memory.Feature? = this.feature,
+    ) = CmpMessage(
+        location = location,
+        feature = feature,
+        confidence = confidence,
+        passMessage = passMessage,
+        senderId = senderId,
+        senderType = senderType,
+        processFeaturesInLm = processFeaturesInLm,
+    )
 }

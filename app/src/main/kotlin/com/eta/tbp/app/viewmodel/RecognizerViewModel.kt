@@ -18,11 +18,15 @@ import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
 import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
+import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.PrimitiveFeature
 import com.eta.tbp.lib.sensor.PrimitiveFeatures
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+typealias Model = GraphObjectModel<PrimitiveFeature, FloatLocation>
+typealias Node = GraphNode<PrimitiveFeature, FloatLocation>
 
 /**
  * Owns the one long-lived [MontyOrchestrator] (and the brain state behind
@@ -87,7 +91,7 @@ import kotlinx.coroutines.withContext
  * `"unknown"`-labeled nodes, permanently poisoning [memory].
  */
 class RecognizerViewModel : ViewModel() {
-    private val memory = GraphMemory<PrimitiveMeasurement>()
+    private val memory = GraphMemory<Model>()
     private val primitiveGraphLM = PrimitiveGraphLM()
     private val tier2 =
         EvidenceGraphLM(
@@ -128,7 +132,7 @@ class RecognizerViewModel : ViewModel() {
         private set
 
     /** Primitives Tier 1 has segmented so far this episode — [EvidenceGraphLM.currentNodes], for the LM-state overlay. */
-    var currentPrimitives by mutableStateOf<List<GraphNode<PrimitiveMeasurement>>>(emptyList())
+    var currentPrimitives by mutableStateOf<List<Node>>(emptyList())
         private set
 
     /** Same primitives as [currentPrimitives], as on-canvas bounding boxes — [MontyOrchestrator.currentPrimitiveOverlays], for the canvas overlay. */
@@ -136,7 +140,7 @@ class RecognizerViewModel : ViewModel() {
         private set
 
     /** Every learned graph, by label — [GraphMemory.snapshot], for the LM-state overlay. */
-    var learnedGraphs by mutableStateOf<Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>>(emptyMap())
+    var learnedGraphs by mutableStateOf<Map<String, List<Model>>>(emptyMap())
         private set
 
     /** Whether the LM-state overlay is showing. Persists across characters once opened. */
@@ -346,9 +350,9 @@ class RecognizerViewModel : ViewModel() {
     /** Everything [applyLmState] needs, captured in one [matchingDispatcher] pass — see the class doc for why bundling matters. */
     private data class LmSnapshot(
         val evidence: Map<String, Float>,
-        val currentPrimitives: List<GraphNode<PrimitiveMeasurement>>,
+        val currentPrimitives: List<Node>,
         val primitiveOverlays: List<PrimitiveOverlay>,
-        val learnedGraphs: Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>,
+        val learnedGraphs: Map<String, List<Model>>,
         val taughtPrimitiveLabels: Set<String>,
     )
 

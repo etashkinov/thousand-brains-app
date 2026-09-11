@@ -54,7 +54,7 @@ import kotlin.math.sin
  * character level instead — recognizing *which* shape a window is and
  * recognizing *how it's oriented* are different tiers' jobs. Size is
  * reported separately too, as
- * [com.eta.tbp.lib.sensor.PrimitiveMeasurement.extent] computed from the
+ * [com.eta.tbp.lib.sensor.PrimitiveFeature.extent] computed from the
  * *winning* window's own un-normalized chord length, once segmentation
  * search has chosen it — not this class's concern.
  *

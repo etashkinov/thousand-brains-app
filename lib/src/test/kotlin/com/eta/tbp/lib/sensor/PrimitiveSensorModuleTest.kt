@@ -1,5 +1,10 @@
+@file:Suppress("ktlint:standard:no-empty-file")
+
 package com.eta.tbp.lib.sensor
 
+// Disabled along with PrimitiveSensorModule.kt itself — see that file's note.
+
+/*
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -78,3 +83,4 @@ class PrimitiveSensorModuleTest {
         assertTrue(module.flushStroke(strokeIndex = 0).isEmpty())
     }
 }
+*/
