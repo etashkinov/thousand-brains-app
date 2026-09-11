@@ -1793,6 +1793,45 @@ deliberately small.
     `AlignmentSearch`'s own extraction (above) already established. Pure
     internal refactor: all 76 `lib` tests passed unchanged, no test file
     needed a single edit.
+- **Follow-up: `CharacterGraphLM` → `EvidenceGraphLM<F>` (single
+  instantiation).** The full `PrimitiveGraphLM`/`CharacterGraphLM` merge
+  above was rejected for concrete reasons, but reasons (1)–(5) only argued
+  against forcing *both* tiers through one class/schema — none of them
+  argued against genericizing Tier 2 alone the way real Monty's
+  `EvidenceGraphLM` already is. Renamed `CharacterGraphLM` to
+  `EvidenceGraphLM<F>`; `GraphNode`/`GraphObjectModel` gained the same
+  `<F : Any>` (`GraphNode.measurement` renamed to the now feature-generic
+  `.feature`), and `GraphMatcher`/`GraphMemory`/`EvidenceGraphLM` are generic
+  over `F : EvidenceFeature<F>`.
+  - **`EvidenceFeature<F : EvidenceFeature<F>>`** (new,
+    `lib/.../memory/EvidenceFeature.kt`) is what a node payload needs to
+    support comparison/merge — expressed as methods `F` implements (the
+    `Comparable<T>` idiom), not injected constructor lambdas, so
+    `GraphMatcher` stays the parameter-free singleton `object` it always
+    was and `GraphMemory<PrimitiveMeasurement>()`/`EvidenceGraphLM(...)`
+    need zero extra wiring beyond a type argument. Real Monty's own
+    `feature_evidence/calculator.py` computes one normalized `difference`
+    per feature (0 = identical) and blends every feature, including
+    categorical ones, into a single weighted average — no hard veto.
+    `EvidenceFeature.difference()` mirrors that single-method shape
+    directly. Adopting Monty's *literal* no-veto blend here, though, would
+    have been a real behavior change (a fully wrong taught-label sequence
+    with identical geometry would score ~0.667 instead of `0`, since this
+    app's `AlignmentScore.kt` — shared with `PrimitiveGraphLM`, untouched
+    by this change — has always used a hard `gate` veto separate from a
+    blended `extraTerm`, a deliberate choice from the entry above). Kept
+    the existing hard-veto behavior exactly: `PrimitiveMeasurement.difference()`
+    returns `Float.POSITIVE_INFINITY` for a label mismatch, and
+    `GraphMatcher` derives both `gate = { a, b -> difference.isFinite() }`
+    and the blended `extraTerm` from that one number. One Monty-shaped
+    method, zero change to any existing match score — verified by
+    `./gradlew build` (all `lib`/`app` tests, ktlint, lint) passing
+    unchanged after the refactor.
+  - `PrimitiveGraphLM` is untouched and still deliberately not
+    `EvidenceGraphLM<F>`-shaped; every reason in the entry above still
+    holds. Today's app still has exactly one real `F = PrimitiveMeasurement`
+    instantiation, wired up in `RecognizerViewModel` — this is a shape
+    change, not a new capability anything currently exercises.
 - **Phase 5: the teach-primitives UI, closing the gap flagged above.**
   `RecognizerViewModel` gains a `TeachMode` (`PRIMITIVES`/`CHARACTERS`,
   defaulting to `PRIMITIVES`) and reads/writes `PrimitiveGraphLM` directly

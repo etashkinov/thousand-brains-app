@@ -16,7 +16,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
-class CharacterGraphLMTest {
+class EvidenceGraphLMTest {
     /** One primitive's raw (un-normalized) endpoints and taught label — a "shape" under test is a sequence of these. */
     private data class PrimitiveSpec(
         val label: String,
@@ -24,11 +24,18 @@ class CharacterGraphLMTest {
         val end: RawPoint,
     )
 
+    private fun featureOf(message: CmpMessage): PrimitiveMeasurement = (message.nonMorphologicalFeatures as PrimitiveFeatures).measurement
+
+    private fun newLm(
+        id: String = "character-0",
+        memory: GraphMemory<PrimitiveMeasurement> = GraphMemory(),
+    ) = EvidenceGraphLM(lmId = id, memory = memory, featureOf = ::featureOf)
+
     /**
      * Builds and drives the exact `CmpMessage` sequence
      * [com.eta.tbp.lib.orchestrator.MontyOrchestrator] would emit for
      * [primitives], without depending on any actual segmentation layer —
-     * this file is about [CharacterGraphLM]'s own matching/teaching logic,
+     * this file is about [EvidenceGraphLM]'s own matching/teaching logic,
      * which [PrimitiveGraphLM]/`StrokeSegmenter` already have their own
      * dedicated tests for. All endpoints are normalized together first (as
      * the real orchestrator does across a whole character), so
@@ -36,12 +43,12 @@ class CharacterGraphLMTest {
      * would.
      */
     private fun drive(
-        characterGraphLM: CharacterGraphLM,
+        evidenceGraphLM: EvidenceGraphLM<PrimitiveMeasurement>,
         primitives: List<PrimitiveSpec>,
     ) {
         val normalized = StrokePreprocessor.normalize(primitives.flatMap { listOf(it.start, it.end) })
 
-        characterGraphLM.preEpisode()
+        evidenceGraphLM.preEpisode()
         var previousExitAngle = 0f
         for ((index, spec) in primitives.withIndex()) {
             val start = normalized[index * 2]
@@ -67,9 +74,9 @@ class CharacterGraphLMTest {
                     senderType = SenderType.SM,
                     processFeaturesInLm = true,
                 )
-            characterGraphLM.matchingStep(listOf(message))
+            evidenceGraphLM.matchingStep(listOf(message))
         }
-        characterGraphLM.postEpisode()
+        evidenceGraphLM.postEpisode()
     }
 
     private fun rotationBasis(angle: Float): Array<FloatArray> {
@@ -104,22 +111,22 @@ class CharacterGraphLMTest {
 
     @Test
     fun `a fresh instance of a taught shape scores its own label highest`() {
-        val memory = GraphMemory()
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+        val memory = GraphMemory<PrimitiveMeasurement>()
+        val evidenceGraphLM = newLm(memory = memory)
 
         // Teach three structurally distinct shapes.
-        drive(characterGraphLM, lineShape())
-        characterGraphLM.teach("line")
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
 
-        drive(characterGraphLM, lShape())
-        characterGraphLM.teach("L")
+        drive(evidenceGraphLM, lShape())
+        evidenceGraphLM.teach("L")
 
-        drive(characterGraphLM, arcShape())
-        characterGraphLM.teach("arc")
+        drive(evidenceGraphLM, arcShape())
+        evidenceGraphLM.teach("arc")
 
         // A *fresh* instance of "L", at a different scale.
-        drive(characterGraphLM, lShape(scale = 2f))
-        val evidence = characterGraphLM.evidenceSnapshot()
+        drive(evidenceGraphLM, lShape(scale = 2f))
+        val evidence = evidenceGraphLM.evidenceSnapshot()
 
         assertTrue("expected all 3 labels scored: $evidence", evidence.keys.containsAll(setOf("line", "L", "arc")))
         assertEquals("L", evidence.maxByOrNull { it.value }?.key)
@@ -127,84 +134,84 @@ class CharacterGraphLMTest {
 
         // getOutput() collapses to the same top hypothesis evidenceSnapshot() reports,
         // matching Monty's get_output(): a single-hypothesis point estimate, not a map.
-        val output = requireNotNull(characterGraphLM.getOutput())
+        val output = requireNotNull(evidenceGraphLM.getOutput())
         assertEquals("L", output.nonMorphologicalFeatures)
         assertEquals(evidence.getValue("L"), output.confidence, 1e-6f)
     }
 
     @Test
     fun `currentNodes reflects the buffered episode and clears on preEpisode`() {
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
-        assertTrue(characterGraphLM.currentNodes().isEmpty())
+        val evidenceGraphLM = newLm()
+        assertTrue(evidenceGraphLM.currentNodes().isEmpty())
 
-        drive(characterGraphLM, lShape())
+        drive(evidenceGraphLM, lShape())
 
-        val nodes = characterGraphLM.currentNodes()
+        val nodes = evidenceGraphLM.currentNodes()
         assertTrue(
-            "expected two line-labeled nodes but got ${nodes.map { it.measurement }}",
-            nodes.size == 2 && nodes.all { it.measurement.label == "line" },
+            "expected two line-labeled nodes but got ${nodes.map { it.feature }}",
+            nodes.size == 2 && nodes.all { it.feature.label == "line" },
         )
 
-        characterGraphLM.preEpisode()
-        assertTrue(characterGraphLM.currentNodes().isEmpty())
+        evidenceGraphLM.preEpisode()
+        assertTrue(evidenceGraphLM.currentNodes().isEmpty())
     }
 
     @Test
     fun `possibleMatches and recognitionResult are Unknown before anything is taught or drawn`() {
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = GraphMemory())
+        val evidenceGraphLM = newLm()
 
-        assertTrue(characterGraphLM.possibleMatches().isEmpty())
-        assertEquals(RecognitionResult.Unknown, characterGraphLM.recognitionResult())
+        assertTrue(evidenceGraphLM.possibleMatches().isEmpty())
+        assertEquals(RecognitionResult.Unknown, evidenceGraphLM.recognitionResult())
     }
 
     @Test
     fun `a confidently recognized shape reports exactly one possible match`() {
-        val memory = GraphMemory()
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+        val memory = GraphMemory<PrimitiveMeasurement>()
+        val evidenceGraphLM = newLm(memory = memory)
 
-        drive(characterGraphLM, lineShape())
-        characterGraphLM.teach("line")
-        drive(characterGraphLM, lShape())
-        characterGraphLM.teach("L")
-        drive(characterGraphLM, arcShape())
-        characterGraphLM.teach("arc")
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
+        drive(evidenceGraphLM, lShape())
+        evidenceGraphLM.teach("L")
+        drive(evidenceGraphLM, arcShape())
+        evidenceGraphLM.teach("arc")
 
-        drive(characterGraphLM, lShape(scale = 2f))
-        val evidence = characterGraphLM.evidenceSnapshot()
+        drive(evidenceGraphLM, lShape(scale = 2f))
+        val evidence = evidenceGraphLM.evidenceSnapshot()
 
-        assertEquals(listOf("L"), characterGraphLM.possibleMatches())
-        assertEquals(RecognitionResult.Recognized("L", evidence.getValue("L")), characterGraphLM.recognitionResult())
+        assertEquals(listOf("L"), evidenceGraphLM.possibleMatches())
+        assertEquals(RecognitionResult.Recognized("L", evidence.getValue("L")), evidenceGraphLM.recognitionResult())
     }
 
     @Test
     fun `two structurally identical shapes taught under different labels tie`() {
-        val memory = GraphMemory()
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+        val memory = GraphMemory<PrimitiveMeasurement>()
+        val evidenceGraphLM = newLm(memory = memory)
 
-        drive(characterGraphLM, lShape())
-        characterGraphLM.teach("L")
-        drive(characterGraphLM, lShape())
-        characterGraphLM.teach("L2")
+        drive(evidenceGraphLM, lShape())
+        evidenceGraphLM.teach("L")
+        drive(evidenceGraphLM, lShape())
+        evidenceGraphLM.teach("L2")
 
-        drive(characterGraphLM, lShape(scale = 2f))
+        drive(evidenceGraphLM, lShape(scale = 2f))
 
-        assertEquals(setOf("L", "L2"), characterGraphLM.possibleMatches().toSet())
-        val result = characterGraphLM.recognitionResult()
+        assertEquals(setOf("L", "L2"), evidenceGraphLM.possibleMatches().toSet())
+        val result = evidenceGraphLM.recognitionResult()
         assertTrue("expected Ambiguous but was $result", result is RecognitionResult.Ambiguous)
         assertEquals(setOf("L", "L2"), (result as RecognitionResult.Ambiguous).labels.toSet())
     }
 
     @Test
     fun `state captures taught labels and loadState restores them into a fresh instance`() {
-        val memory = GraphMemory()
-        val characterGraphLM = CharacterGraphLM(lmId = "character-0", memory = memory)
+        val memory = GraphMemory<PrimitiveMeasurement>()
+        val evidenceGraphLM = newLm(memory = memory)
 
-        drive(characterGraphLM, lineShape())
-        characterGraphLM.teach("line")
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
 
-        val restored = CharacterGraphLM(lmId = "character-1", memory = GraphMemory())
-        restored.loadState(characterGraphLM.state())
+        val restored = newLm(id = "character-1")
+        restored.loadState(evidenceGraphLM.state())
 
-        assertEquals(characterGraphLM.state().keys, restored.state().keys)
+        assertEquals(evidenceGraphLM.state().keys, restored.state().keys)
     }
 }

@@ -11,10 +11,10 @@ class GraphMemoryTest {
         x: Float,
         y: Float,
         angle: Float,
-        measurement: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
-    ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
+        feature: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
+    ) = GraphNode(id, floatArrayOf(x, y), angle, feature)
 
-    private fun staircase(jitter: Float = 0f): List<GraphNode> =
+    private fun staircase(jitter: Float = 0f): List<GraphNode<PrimitiveMeasurement>> =
         listOf(
             node(0, -1f + jitter, 0f, 0f + jitter),
             node(1, 0f, 0f, 1.5f),
@@ -23,12 +23,12 @@ class GraphMemoryTest {
 
     private fun modelOf(
         label: String,
-        nodes: List<GraphNode>,
+        nodes: List<GraphNode<PrimitiveMeasurement>>,
     ) = GraphObjectModel(label, nodes, edgeChainOf(nodes), exemplarCount = 1)
 
     @Test
     fun `teaching a new label creates its first variant`() {
-        val memory = GraphMemory()
+        val memory = GraphMemory<PrimitiveMeasurement>()
         memory.addOrMerge(modelOf("a", staircase()), "a")
 
         assertEquals(setOf("a"), memory.allLabels())
@@ -37,7 +37,7 @@ class GraphMemoryTest {
 
     @Test
     fun `teaching a near-identical shape under the same label merges instead of duplicating`() {
-        val memory = GraphMemory()
+        val memory = GraphMemory<PrimitiveMeasurement>()
         memory.addOrMerge(modelOf("a", staircase()), "a")
         memory.addOrMerge(modelOf("a", staircase(jitter = 0.01f)), "a")
 
@@ -48,7 +48,7 @@ class GraphMemoryTest {
 
     @Test
     fun `teaching a structurally different shape under the same label spawns a second variant`() {
-        val memory = GraphMemory()
+        val memory = GraphMemory<PrimitiveMeasurement>()
         memory.addOrMerge(modelOf("a", staircase()), "a")
 
         val differentShape =
@@ -63,16 +63,16 @@ class GraphMemoryTest {
 
     @Test
     fun `detectNewObject is true for a label with no stored variants`() {
-        val memory = GraphMemory()
+        val memory = GraphMemory<PrimitiveMeasurement>()
         assertTrue(memory.detectNewObject(modelOf("a", staircase()), "a"))
     }
 
     @Test
     fun `snapshot and restore round-trip the stored models`() {
-        val memory = GraphMemory()
+        val memory = GraphMemory<PrimitiveMeasurement>()
         memory.addOrMerge(modelOf("a", staircase()), "a")
 
-        val restored = GraphMemory()
+        val restored = GraphMemory<PrimitiveMeasurement>()
         restored.restore(memory.snapshot())
 
         assertEquals(memory.allLabels(), restored.allLabels())

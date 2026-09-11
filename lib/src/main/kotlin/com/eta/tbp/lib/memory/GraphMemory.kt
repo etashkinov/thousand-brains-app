@@ -1,6 +1,5 @@
 package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -10,12 +9,12 @@ import kotlin.math.sin
  * (natural handwriting variation: different stroke order/count for the
  * "same" character shouldn't force-merge into one corrupted model).
  */
-class GraphMemory {
-    private val models = mutableMapOf<String, MutableList<GraphObjectModel>>()
+class GraphMemory<F : EvidenceFeature<F>> {
+    private val models = mutableMapOf<String, MutableList<GraphObjectModel<F>>>()
 
     /** Mirrors Monty's `detect_new_object_k_steps` — the merge-vs-spawn decision. */
     fun detectNewObject(
-        candidate: GraphObjectModel,
+        candidate: GraphObjectModel<F>,
         label: String,
     ): Boolean {
         val existing = models[label] ?: return true
@@ -24,7 +23,7 @@ class GraphMemory {
     }
 
     fun addOrMerge(
-        candidate: GraphObjectModel,
+        candidate: GraphObjectModel<F>,
         label: String,
     ) {
         val variants = models.getOrPut(label) { mutableListOf() }
@@ -38,22 +37,22 @@ class GraphMemory {
         }
     }
 
-    fun candidatesForLabel(label: String): List<GraphObjectModel> = models[label] ?: emptyList()
+    fun candidatesForLabel(label: String): List<GraphObjectModel<F>> = models[label] ?: emptyList()
 
     fun allLabels(): Set<String> = models.keys
 
-    fun snapshot(): Map<String, List<GraphObjectModel>> = models.mapValues { it.value.toList() }
+    fun snapshot(): Map<String, List<GraphObjectModel<F>>> = models.mapValues { it.value.toList() }
 
-    fun restore(snapshot: Map<String, List<GraphObjectModel>>) {
+    fun restore(snapshot: Map<String, List<GraphObjectModel<F>>>) {
         models.clear()
         snapshot.forEach { (label, variants) -> models[label] = variants.toMutableList() }
     }
 
     /** Averages [candidate]'s nodes (aligned to [target]'s own order) into the stored model. */
     private fun mergeInto(
-        target: GraphObjectModel,
-        candidate: GraphObjectModel,
-    ): GraphObjectModel {
+        target: GraphObjectModel<F>,
+        candidate: GraphObjectModel<F>,
+    ): GraphObjectModel<F> {
         val alignedWindow = GraphMatcher.bestAlignedWindow(target, candidate) ?: return target
         val existingWeight = target.exemplarCount.toFloat()
         val totalWeight = existingWeight + 1f
@@ -71,13 +70,7 @@ class GraphMemory {
                             candidateNode.absoluteAngle,
                             totalWeight,
                         ),
-                    measurement =
-                        weightedAverageMeasurement(
-                            storedNode.measurement,
-                            existingWeight,
-                            candidateNode.measurement,
-                            totalWeight,
-                        ),
+                    feature = storedNode.feature.mergedWith(candidateNode.feature, existingWeight, totalWeight),
                 )
             }
 
@@ -97,25 +90,6 @@ class GraphMemory {
         floatArrayOf(
             (stored[0] * storedWeight + candidate[0]) / totalWeight,
             (stored[1] * storedWeight + candidate[1]) / totalWeight,
-        )
-
-    /**
-     * Plain weighted average of [PrimitiveMeasurement.extent] — a chord
-     * length is already a plain magnitude, not a periodic heading, so this
-     * needs none of [weightedAverageAngle]'s wraparound-aware trick.
-     * [stored] and [candidate] always share the same
-     * [PrimitiveMeasurement.label] here — [GraphMatcher.bestAlignedWindow]
-     * only aligns nodes whose label already matched.
-     */
-    private fun weightedAverageMeasurement(
-        stored: PrimitiveMeasurement,
-        storedWeight: Float,
-        candidate: PrimitiveMeasurement,
-        totalWeight: Float,
-    ): PrimitiveMeasurement =
-        PrimitiveMeasurement(
-            label = stored.label,
-            extent = (stored.extent * storedWeight + candidate.extent) / totalWeight,
         )
 
     /** Circular weighted mean via the sin/cos trick, so averaging never breaks at the +-PI wraparound. */

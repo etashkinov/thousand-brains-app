@@ -11,18 +11,18 @@ class GraphMatcherTest {
         x: Float,
         y: Float,
         angle: Float,
-        measurement: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
-    ) = GraphNode(id, floatArrayOf(x, y), angle, measurement)
+        feature: PrimitiveMeasurement = PrimitiveMeasurement(label = "line", extent = 1f),
+    ) = GraphNode(id, floatArrayOf(x, y), angle, feature)
 
     /** A simple 3-node "staircase": line, arc, line. */
-    private fun staircase(): List<GraphNode> =
+    private fun staircase(): List<GraphNode<PrimitiveMeasurement>> =
         listOf(
             node(0, -1f, 0f, 0f, PrimitiveMeasurement(label = "line", extent = 1f)),
             node(1, 0f, 0f, 1.5f, PrimitiveMeasurement(label = "arc", extent = 1f)),
             node(2, 1f, 1f, 0.2f, PrimitiveMeasurement(label = "line", extent = 1f)),
         )
 
-    private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
+    private fun modelOf(nodes: List<GraphNode<PrimitiveMeasurement>>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
 
     @Test
     fun `identical graphs score near 1`() {
@@ -124,6 +124,6 @@ class GraphMatcherTest {
         val nodes = staircase()
         val reversedCandidate = modelOf(nodes.reversed())
         val window = GraphMatcher.bestAlignedWindow(modelOf(nodes), reversedCandidate)
-        assertEquals(nodes.reversed().map { it.measurement }, window?.map { it.measurement })
+        assertEquals(nodes.reversed().map { it.feature }, window?.map { it.feature })
     }
 }

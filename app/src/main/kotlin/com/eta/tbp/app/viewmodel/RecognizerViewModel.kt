@@ -9,7 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.eta.tbp.app.capture.CaptureMode
 import com.eta.tbp.app.capture.CapturedExample
 import com.eta.tbp.app.sensor.toRawPoints
-import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.lm.recognitionResult
@@ -18,6 +18,8 @@ import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.orchestrator.MontyOrchestrator
 import com.eta.tbp.lib.orchestrator.PrimitiveOverlay
+import com.eta.tbp.lib.sensor.PrimitiveFeatures
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,7 +34,7 @@ import kotlinx.coroutines.withContext
  * [orchestrator]/[tier2]/[primitiveGraphLM]/[memory] is confined to
  * [matchingDispatcher] — a single serial background dispatcher, never Main.
  * These `lib` objects are plain, non-thread-safe mutable Kotlin classes
- * (`CharacterGraphLM`'s private node buffer, `GraphMemory`'s private map,
+ * (`EvidenceGraphLM`'s private node buffer, `GraphMemory`'s private map,
  * etc.); as taught templates/characters accumulate, matching against them
  * takes long enough to visibly freeze the UI if run on Main, which is what
  * every method here used to do synchronously. Retrofitting thread-safety
@@ -85,9 +87,23 @@ import kotlinx.coroutines.withContext
  * `"unknown"`-labeled nodes, permanently poisoning [memory].
  */
 class RecognizerViewModel : ViewModel() {
-    private val memory = GraphMemory()
+    private val memory = GraphMemory<PrimitiveMeasurement>()
     private val primitiveGraphLM = PrimitiveGraphLM()
-    private val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
+    private val tier2 =
+        EvidenceGraphLM(
+            lmId = "character-0",
+            memory = memory,
+            featureOf = { message ->
+                val features = message.nonMorphologicalFeatures
+                if (features !is PrimitiveFeatures) {
+                    throw IllegalArgumentException(
+                        "RecognizerViewModel's EvidenceGraphLM<PrimitiveMeasurement> requires PrimitiveFeatures. " +
+                            "Found: ${features::class.simpleName}",
+                    )
+                }
+                features.measurement
+            },
+        )
     private val orchestrator = MontyOrchestrator(primitiveGraphLM, tier2)
     private val matchingDispatcher = Dispatchers.Default.limitedParallelism(1)
 
@@ -111,8 +127,8 @@ class RecognizerViewModel : ViewModel() {
     var taughtLabel by mutableStateOf<String?>(null)
         private set
 
-    /** Primitives Tier 1 has segmented so far this episode — [CharacterGraphLM.currentNodes], for the LM-state overlay. */
-    var currentPrimitives by mutableStateOf<List<GraphNode>>(emptyList())
+    /** Primitives Tier 1 has segmented so far this episode — [EvidenceGraphLM.currentNodes], for the LM-state overlay. */
+    var currentPrimitives by mutableStateOf<List<GraphNode<PrimitiveMeasurement>>>(emptyList())
         private set
 
     /** Same primitives as [currentPrimitives], as on-canvas bounding boxes — [MontyOrchestrator.currentPrimitiveOverlays], for the canvas overlay. */
@@ -120,7 +136,7 @@ class RecognizerViewModel : ViewModel() {
         private set
 
     /** Every learned graph, by label — [GraphMemory.snapshot], for the LM-state overlay. */
-    var learnedGraphs by mutableStateOf<Map<String, List<GraphObjectModel>>>(emptyMap())
+    var learnedGraphs by mutableStateOf<Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>>(emptyMap())
         private set
 
     /** Whether the LM-state overlay is showing. Persists across characters once opened. */
@@ -330,9 +346,9 @@ class RecognizerViewModel : ViewModel() {
     /** Everything [applyLmState] needs, captured in one [matchingDispatcher] pass — see the class doc for why bundling matters. */
     private data class LmSnapshot(
         val evidence: Map<String, Float>,
-        val currentPrimitives: List<GraphNode>,
+        val currentPrimitives: List<GraphNode<PrimitiveMeasurement>>,
         val primitiveOverlays: List<PrimitiveOverlay>,
-        val learnedGraphs: Map<String, List<GraphObjectModel>>,
+        val learnedGraphs: Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>,
         val taughtPrimitiveLabels: Set<String>,
     )
 

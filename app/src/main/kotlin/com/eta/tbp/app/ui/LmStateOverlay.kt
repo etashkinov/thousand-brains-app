@@ -33,7 +33,7 @@ fun LmStateToggleButton(
 
 /**
  * Debug overlay showing both tiers' current internal state, direct from
- * their own introspection queries (`CharacterGraphLM.currentNodes()`,
+ * their own introspection queries (`EvidenceGraphLM.currentNodes()`,
  * `GraphMemory.snapshot()`) rather than anything carried by a `CmpMessage`
  * — the same "read the LM's state directly" spirit as the live evidence
  * bars (see IMPLEMENTATION_PLAN.md §3.4's note on [evidenceSnapshot]).
@@ -46,8 +46,8 @@ fun LmStateToggleButton(
  */
 @Composable
 fun LmStateOverlay(
-    currentPrimitives: List<GraphNode>,
-    learnedGraphs: Map<String, List<GraphObjectModel>>,
+    currentPrimitives: List<GraphNode<PrimitiveMeasurement>>,
+    learnedGraphs: Map<String, List<GraphObjectModel<PrimitiveMeasurement>>>,
     taughtPrimitiveLabels: Set<String>,
     modifier: Modifier = Modifier,
 ) {
@@ -103,7 +103,7 @@ fun LmStateOverlay(
 }
 
 /** A primitive's taught label plus its size — see [PrimitiveMeasurement]. */
-private fun describe(node: GraphNode): String = describe(node.measurement)
+private fun describe(node: GraphNode<PrimitiveMeasurement>): String = describe(node.feature)
 
 /** Formats a single measurement as `label(ext=…)` — shared with [DrawingCanvas]'s on-canvas primitive overlay labels. */
 internal fun describe(measurement: PrimitiveMeasurement): String = "${measurement.label}(ext=${"%.2f".format(measurement.extent)})"

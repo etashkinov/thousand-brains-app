@@ -52,7 +52,7 @@ code; a primitive is whatever label the user teaches it, matched purely by
 evidence, the same way the character tier already worked. Each chosen
 window becomes one message tagged with its pose *relative to the stroke*,
 not the screen. The character-level **Learning Module**
-(`CharacterGraphLM`) then composes those primitives into a character-level
+(`EvidenceGraphLM`) then composes those primitives into a character-level
 graph — nodes and edges with relative positions and tolerance-banded
 angles — and matches new input against every previously-taught character by
 accumulating evidence as the stroke is drawn. If two characters are equally
@@ -69,7 +69,7 @@ evidence-matched design.
 ## Architecture
 
 ```
-Touch (MotionEvent) → SensorModule → MontyOrchestrator                      → CharacterGraphLM → GraphMemory<characters>
+Touch (MotionEvent) → SensorModule → MontyOrchestrator                      → EvidenceGraphLM → GraphMemory<characters>
                             ↑         (StrokeSegmenter: global DP search       ↑
                    (same CmpMessage    over each stroke, scored by          (evidence accumulation,
                     schema throughout) PrimitiveGraphLM.evaluate)            merge/spawn decisions)
@@ -114,7 +114,7 @@ design — it ports Monty's actual published interfaces:
   whether new evidence should merge into an existing learned model or spawn a
   new one.
 - **Two taught tiers now, both evidence-matched — no fixed shape
-  vocabulary anywhere.** `PrimitiveGraphLM` (Tier 1) and `CharacterGraphLM`
+  vocabulary anywhere.** `PrimitiveGraphLM` (Tier 1) and `EvidenceGraphLM`
   (Tier 2) are both genuine, taught `LearningModule`-style components: a
   primitive ("line", "arc", or whatever label the user teaches) is
   recognized by matching against taught examples, exactly the way a
@@ -144,7 +144,7 @@ the build level, not just by convention:
 - **`lib`** — a plain **Kotlin/JVM module** (`kotlin("jvm")`, not
   `com.android.library`). It contains *all* of the brain: `CmpMessage`, the
   `SensorModule`/`LearningModule` interfaces, `PrimitiveSensorModule`,
-  `CharacterGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher`, and
+  `EvidenceGraphLM`, `GraphObjectModel`/`GraphMemory`/`GraphMatcher`, and
   `MontyOrchestrator` wiring them into a real step loop.
   The Android SDK is not on its classpath, so nothing in it can import
   `android.*` even by accident. Its public API only ever exchanges plain
@@ -154,7 +154,7 @@ the build level, not just by convention:
   doesn't: capturing `MotionEvent`s and converting them into `lib`'s
   `RawTouchObservation`s, the Compose UI, and on-device persistence
   (writing/reading the data `lib`'s `state()` produces, e.g.
-  `CharacterGraphLM`'s learned `GraphObjectModel`s). In the organism
+  `EvidenceGraphLM`'s learned `GraphObjectModel`s). In the organism
   analogy, `app` is the sensors and motor output — the touchscreen and the
   screen/storage — everything outside the brain.
 
@@ -200,11 +200,11 @@ lib/                        # Kotlin/JVM module — NO Android SDK dependency
     lm/
       LearningModule.kt       # shared interface: matchingStep/receiveVotes/sendOutVote/getOutput
       PrimitiveGraphLM.kt     # Tier 1: taught, evidence-matched primitive recognizer (no fixed shape vocabulary)
-      CharacterGraphLM.kt     # Tier 2: evidenceSnapshot(), possibleMatches(), teach()
+      EvidenceGraphLM.kt     # Tier 2: evidenceSnapshot(), possibleMatches(), teach()
       RecognitionResult.kt    # the three-way UI outcome + possibleMatches()/recognitionResult(evidence), shared by both tiers
     orchestrator/
       StrokeSegmenter.kt      # generic global DP segmentation search (Viterbi-style)
-      MontyOrchestrator.kt    # runs StrokeSegmenter per stroke, scored by PrimitiveGraphLM, feeds CharacterGraphLM
+      MontyOrchestrator.kt    # runs StrokeSegmenter per stroke, scored by PrimitiveGraphLM, feeds EvidenceGraphLM
     memory/
       GraphObjectModel.kt     # GraphNode, GraphEdge, GraphObjectModel, edgeChainOf
       GraphMatcher.kt         # order/direction-tolerant matching (character tier)
@@ -256,7 +256,7 @@ and tested end to end. There's no persisted state between runs yet
 original hand-coded `PrimitiveSensorModule` (fixed `LINE`/`ARC` geometric
 fit tests) is gone, replaced by `PrimitiveGraphLM` (a taught,
 evidence-matched primitive recognizer, structurally parallel to
-`CharacterGraphLM`) plus `StrokeSegmenter` (a global dynamic-programming
+`EvidenceGraphLM`) plus `StrokeSegmenter` (a global dynamic-programming
 search over each whole stroke). `lib`'s test suite (76 unit tests) passes
 against this new design, including regression tests for the specific real
 hand-drawn shapes that motivated it.

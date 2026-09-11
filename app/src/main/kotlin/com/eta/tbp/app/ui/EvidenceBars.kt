@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * Live per-label match evidence ([com.eta.tbp.lib.lm.CharacterGraphLM.evidenceSnapshot]),
+ * Live per-label match evidence ([com.eta.tbp.lib.lm.EvidenceGraphLM.evidenceSnapshot]),
  * rendered as horizontal bars sorted by descending confidence. Renders
  * nothing before anything's been drawn or taught.
  */

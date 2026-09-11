@@ -1,7 +1,7 @@
 package com.eta.tbp.lib.orchestrator
 
 import com.eta.tbp.lib.cmp.CmpMessage
-import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.sensor.PrimitiveFeatures
@@ -14,7 +14,7 @@ import com.eta.tbp.lib.sensor.StrokePreprocessor
 /**
  * One detected primitive's on-screen extent, for a debug overlay drawn
  * directly on top of the canvas — the pixel-space counterpart of the
- * text-only primitive list [com.eta.tbp.lib.lm.CharacterGraphLM.currentNodes]
+ * text-only primitive list [com.eta.tbp.lib.lm.EvidenceGraphLM.currentNodes]
  * already exposes. [topLeft]/[bottomRight] are in the *original, raw touch*
  * coordinate space (same units as the [RawPoint]s passed to
  * [MontyOrchestrator.stepStroke]), not the normalized space
@@ -31,7 +31,7 @@ data class PrimitiveOverlay(
 /**
  * Mirrors real Monty's `MontyBase`/step loop, wiring [PrimitiveSensorModule]
  * (Tier 1's `SensorModule`, itself backed by [PrimitiveGraphLM]'s taught,
- * evidence-matched classification) and [CharacterGraphLM] (Tier 2, the
+ * evidence-matched classification) and [EvidenceGraphLM] (Tier 2, the
  * character-level [com.eta.tbp.lib.lm.LearningModule]) together: collect
  * observation → step SM → step LM (modeling) → step LM (voting), the same
  * loop shape real Monty's own `MontyBase` runs.
@@ -70,7 +70,7 @@ data class PrimitiveOverlay(
  */
 class MontyOrchestrator(
     primitiveGraphLM: PrimitiveGraphLM,
-    private val tier2: CharacterGraphLM,
+    private val tier2: EvidenceGraphLM<PrimitiveMeasurement>,
 ) {
     private val primitiveSensorModule = PrimitiveSensorModule(sensorId = SENSOR_ID, primitiveGraphLM = primitiveGraphLM)
     private val strokePoints = mutableListOf<List<RawPoint>>()
@@ -115,7 +115,7 @@ class MontyOrchestrator(
 
     /**
      * Ends the character episode and returns the recognition decision. The
-     * one point where [CharacterGraphLM.postEpisode]'s real effect
+     * one point where [EvidenceGraphLM.postEpisode]'s real effect
      * (snapshotting for [teach]) fires — deliberately not fired on every
      * [replay], see that method's doc.
      */
@@ -130,7 +130,7 @@ class MontyOrchestrator(
      * Every primitive detected so far this episode, as an on-screen
      * bounding box + measurement — direct introspection for a debug
      * overlay drawn on the canvas itself, same spirit as
-     * [CharacterGraphLM.currentNodes]/[CharacterGraphLM.evidenceSnapshot].
+     * [EvidenceGraphLM.currentNodes]/[EvidenceGraphLM.evidenceSnapshot].
      * Rebuilt on every [replay], so it's always in sync with [strokePoints].
      */
     fun currentPrimitiveOverlays(): List<PrimitiveOverlay> = primitiveOverlays.toList()

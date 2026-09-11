@@ -8,7 +8,7 @@ package com.eta.tbp.lib.lm
  * normal convergence, and 2+ is Monty's own multi-hypothesis case — an app
  * surfaces that last case as a question instead of forcing a guess.
  *
- * Generic over which tier's evidence produced it: [CharacterGraphLM] and
+ * Generic over which tier's evidence produced it: [EvidenceGraphLM] and
  * [PrimitiveGraphLM] both reduce a plain `Map<String, Float>` evidence
  * snapshot down to one of these via [recognitionResult] below — there's
  * nothing character-specific about the type itself.

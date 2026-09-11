@@ -18,7 +18,7 @@ import kotlin.math.sin
  * never converged (see IMPLEMENTATION_PLAN.md §7). The user teaches
  * primitive shapes — a line, an arc, a loop, whatever labels naturally
  * arise — by drawing an example and labeling it, exactly the way
- * [CharacterGraphLM] is taught characters. There is no fixed, hand-designed
+ * [EvidenceGraphLM] is taught characters. There is no fixed, hand-designed
  * shape vocabulary anywhere in this class.
  *
  * Given a candidate window (a short slice of a stroke, *proposed* by
@@ -64,11 +64,11 @@ import kotlin.math.sin
  * feeds an LM — [com.eta.tbp.lib.sensor.PrimitiveSensorModule] (the actual
  * `SensorModule` for this tier) queries it directly with candidate windows
  * during its internal segmentation search, the same "direct introspection
- * query" spirit as [CharacterGraphLM.evidenceSnapshot]. It still mirrors
- * [CharacterGraphLM]'s teach-by-drawing contract in shape,
+ * query" spirit as [EvidenceGraphLM.evidenceSnapshot]. It still mirrors
+ * [EvidenceGraphLM]'s teach-by-drawing contract in shape,
  * just at a different granularity and — deliberately — not in exact
- * mechanism: [CharacterGraphLM.teach] labels whatever was *last completed*,
- * safe there because [CharacterGraphLM.matchingStep] is only ever called
+ * mechanism: [EvidenceGraphLM.teach] labels whatever was *last completed*,
+ * safe there because [EvidenceGraphLM.matchingStep] is only ever called
  * once per real, already-decided primitive. [evaluate] here gets called
  * many times per replay for purely speculative candidate windows the
  * segmentation search is still trying out — "last evaluated" would be
@@ -77,7 +77,7 @@ import kotlin.math.sin
  * directly instead of relying on any such side effect. [evaluate] is a
  * pure function of its input.
  *
- * Unlike [CharacterGraphLM], this keeps every taught example as its own
+ * Unlike [EvidenceGraphLM], this keeps every taught example as its own
  * template variant rather than merging near-duplicates: at the handful of
  * primitive examples a curriculum like this actually needs, merge-vs-spawn
  * bookkeeping isn't worth the added complexity yet.

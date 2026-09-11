@@ -15,7 +15,7 @@ import kotlin.math.sqrt
 /**
  * The concrete `SensorModule<RawTouchObservation>` that turns a stroke's
  * resampled, normalized observations into the primitive `CmpMessage`s
- * [com.eta.tbp.lib.lm.CharacterGraphLM] consumes — restoring the SM/LM
+ * [com.eta.tbp.lib.lm.EvidenceGraphLM] consumes — restoring the SM/LM
  * boundary the original, deleted `PrimitiveSensorModule` (see
  * IMPLEMENTATION_PLAN.md §7) provided, after a rewrite briefly folded this
  * class's job directly into [com.eta.tbp.lib.orchestrator.MontyOrchestrator]

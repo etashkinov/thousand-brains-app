@@ -1,9 +1,12 @@
 package com.eta.tbp.lib.orchestrator
 
-import com.eta.tbp.lib.lm.CharacterGraphLM
+import com.eta.tbp.lib.cmp.CmpMessage
+import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.sensor.PrimitiveFeatures
+import com.eta.tbp.lib.sensor.PrimitiveMeasurement
 import com.eta.tbp.lib.sensor.RawPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -23,11 +26,13 @@ class MontyOrchestratorTest {
             RawPoint(cos(angle).toFloat(), sin(angle).toFloat())
         }
 
-    private fun newOrchestrator(memory: GraphMemory = GraphMemory()): MontyOrchestrator {
+    private fun featureOf(message: CmpMessage): PrimitiveMeasurement = (message.nonMorphologicalFeatures as PrimitiveFeatures).measurement
+
+    private fun newOrchestrator(memory: GraphMemory<PrimitiveMeasurement> = GraphMemory()): MontyOrchestrator {
         val primitiveGraphLM = PrimitiveGraphLM()
         primitiveGraphLM.teach("line", canonicalLine())
         primitiveGraphLM.teach("arc", canonicalArc())
-        val tier2 = CharacterGraphLM(lmId = "character-0", memory = memory)
+        val tier2 = EvidenceGraphLM(lmId = "character-0", memory = memory, featureOf = ::featureOf)
         return MontyOrchestrator(primitiveGraphLM, tier2)
     }
 
