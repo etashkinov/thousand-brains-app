@@ -1,21 +1,44 @@
 # Implementation Plan — TBP-Inspired Handwriting Recognition App
 
-**Platform:** Android (Kotlin) · **Status:** Phases 0–5 done. Tier 1 was
-**redesigned** after Phase 4 (see §7's final entry): `PrimitiveSensorModule`,
-a hand-coded line/arc geometric classifier, was recalibrated five times
-chasing real hand-drawn failures and never converged — replaced with
-`PrimitiveGraphLM`, a taught, evidence-matched `LearningModule` (the app
-learns primitive shapes the way it learns characters, no fixed shape
-vocabulary), plus `StrokeSegmenter`, a global dynamic-programming
-segmentation search over a whole stroke, replacing the old per-point local
-threshold decision. `lib`'s brain pipeline (sensor, both LM tiers,
-orchestrator) is rebuilt and tested end to end against the concrete
-real-drawing failures that motivated it. **Phase 5** (the teach-primitives
-UI, §7's latest entry) is now built: `app` has a primitives/characters mode
+**Platform:** Android (Kotlin) · **Status:** Phases 0–5 and 5.5a done, plus
+Phase 4.5 — none of which §5 originally planned for. **Phase 4.5**, **Phase
+5**, and **Phase 5.5a** below were inserted after the fact and this section
+was renumbered to match; see the note at the head of §5 for why. **Phase
+5.5b (Merge/Spawn Tuning), the work originally planned as "Phase 5," has
+*not* been done** — it's blocked on real handwriting data Phase 5.5a's
+capture tool can now produce, but hasn't yet (see below).
+
+Tier 1 was **redesigned** in what's now **Phase 4.5** (see §7's final
+entries): `PrimitiveSensorModule`, a hand-coded line/arc geometric
+classifier, was recalibrated five times chasing real hand-drawn failures
+and never converged — replaced with `PrimitiveGraphLM`, a taught,
+evidence-matched `LearningModule` (the app learns primitive shapes the way
+it learns characters, no fixed shape vocabulary), plus `StrokeSegmenter`, a
+global dynamic-programming segmentation search over a whole stroke,
+replacing the old per-point local threshold decision. `lib`'s brain
+pipeline (sensor, both LM tiers, orchestrator) is rebuilt and tested end to
+end against the concrete real-drawing failures that motivated it. **Phase
+5** (the teach-primitives UI plus the background-thread matching fix, §7's
+latest entries) is now built: `app` has a primitives/characters mode
 switch, with character-teaching gated behind having taught at least one
-primitive — the app is end-to-end functional for a real user for the first
-time. Real-handwriting merge/spawn and segmentation-constant tuning against
-that new UI (not just the earlier synthetic repro cases) is next.
+primitive, and all `lib` calls run off the main thread — the app is
+end-to-end functional for a real user for the first time.
+
+**Phase 5.5a** (stroke capture/export tool) is also now built: `app` can
+record taught examples (opt-in, off by default) and export them as JSON via
+the system share sheet — built specifically because Claude cannot drive a
+connected device (`CLAUDE.md`) and there was no other way to get real
+handwriting data into a `lib` test.
+
+**What's actually next is Phase 5.5b**, not new work: real-handwriting
+merge/spawn and segmentation-constant tuning (`GraphMemory.MERGE_THRESHOLD`
+is still the untouched `0.75f` placeholder from Phase 3) against exported
+captures — this is what §5 originally called "Phase 5," before Phase
+4.5/5/5.5a above got inserted ahead of it. It needs the user to actually
+draw on-device with capture on and hand back an export; nothing has been
+tuned yet. No on-device verification has been done for any of Phases 4–5.5a
+(standing project rule, see `CLAUDE.md`) — that, too, is still the user's
+to confirm.
 **Core idea:** A two-tier, Thousand-Brains-Project-inspired recognizer that learns
 handwritten characters live from touchscreen strokes, with no pretraining —
 architecture ported as faithfully as possible from Monty's actual CMP message
@@ -460,7 +483,7 @@ vocabulary, unlike open-ended taught characters — nothing to fix here per
 se. Revisit only if primitive-level ambiguity (a segment that's genuinely
 borderline line/arc, or a tight arc's curvature reading close to the
 sharp-kink veto — see §7) turns out to matter once real handwriting is
-tested against it (Phase 5) — and see §7 for the deeper "should boundary
+tested against it (Phase 5.5b) — and see §7 for the deeper "should boundary
 detection itself be a learned, evidence-based process" question this was
 weighed against, which real Monty hasn't made robust either.
 
@@ -720,7 +743,7 @@ Known, accepted simplification: every stroke is resampled to the same
 fixed point count before being pooled for shared normalization, so a short
 stroke and a long stroke contribute equally many points to the
 centroid/scale estimate rather than being weighted by their actual arc
-length — worth revisiting in Phase 5 if very unevenly-sized strokes (e.g.
+length — worth revisiting in Phase 5.5b if very unevenly-sized strokes (e.g.
 a dot plus a long stroke) turn out to matter.
 
 ---
@@ -754,6 +777,22 @@ redesign.
 ---
 
 ## 5. Phased Build Plan
+
+> **Renumbering note.** Phases 4.5, 5, and 5.5a below were not in the
+> original plan. After Phase 4 shipped, real hand-drawn testing forced a
+> full Tier-1 rewrite (the geometric classifier never converged — see §7)
+> before the originally-planned "Phase 5" (merge/spawn tuning) could even
+> be meaningfully attempted, and that rewrite left Tier 1 with no way to
+> teach primitives at all, which needed its own UI phase before anything
+> could be tested end to end. Once both of those shipped, attempting the
+> merge/spawn tuning itself ran into a second, unplanned blocker: Claude
+> cannot drive a connected device (`CLAUDE.md`), and `app` had no way to
+> export a drawn stroke to a file, so there was no way to get real
+> handwriting into a `lib` test at all — **Phase 5.5a** (a stroke
+> capture/export tool) was inserted to fix that. The original Phase 5
+> (merge/spawn tuning) is renumbered **Phase 5.5b** and is the actual next
+> phase — it has not been started, and needs the user to actually use the
+> new capture tool on-device and hand back an export before it can be.
 
 ### Phase 0 — Project Setup (½–1 day) ✅ Done
 New Android Studio project with **two Gradle modules from day one**: `lib`
@@ -799,7 +838,7 @@ Phase 1→2→3 pipeline (unit test, not a debug button; the UI hook for
 teaching is Phase 4's job). `mergeInto` and `matchScore` are real
 implementations now, not the original sketch's `TODO()`s — see §3.5.
 
-### Phase 4 — Teach & Recognize UI Loop (2–3 days)
+### Phase 4 — Teach & Recognize UI Loop (2–3 days) ✅ Done
 Build `MontyOrchestrator` for real (§3.6) and wire `app`'s touch input to
 it. The core design point (§3.6): one episode is one full **character**,
 uniform across both tiers — matching Monty's own `MontyBase.reset()`, which
@@ -872,12 +911,185 @@ as message data rather than a separate lifecycle call.
 multi-stroke letter (e.g. "t" or "+") and a deliberately ambiguous pair
 (e.g. "O"/"0"), and confirm: the multi-stroke label is recognized as one
 character from a fresh two-stroke instance, and the ambiguous pair
-surfaces a disambiguation prompt rather than a forced guess.
+surfaces a disambiguation prompt rather than a forced guess. **Implemented
+and covered by `MontyOrchestratorTest`; the on-device confirmation itself
+has not been performed** (standing project rule — no `adb` testing against
+a connected device, see `CLAUDE.md` — this is the user's to do).
+Superseded in part by Phase 4.5 below: the `PrimitiveSensorModule` this
+phase built on top of was later deleted and replaced.
 
-### Phase 5 — Merge/Spawn Tuning (2–3 days)
-Tune `GraphMemory.MERGE_THRESHOLD` and `matchScore` against real handwriting
-samples — this is Monty's own `detect_new_object_*` mechanism, not a
-custom heuristic bolted on afterward.
+### Phase 4.5 — Tier-1 Redesign: `PrimitiveGraphLM` + `StrokeSegmenter` ✅ Done
+*(Not in the original plan — inserted after real hand-drawn testing showed
+Phase 2's fixed-threshold geometric classifier was a structurally wrong
+approach, not a tuning problem. Full blow-by-blow in §7's "Threshold
+tuning" entry; this is the short version.)*
+
+Five successive recalibrations of `PrimitiveSensorModule` (the Phase 2
+line/arc classifier) each fixed the specific real-drawing shape that broke
+it while leaving the next shape broken, because forcing every window of a
+continuously-varying hand-drawn stroke into a small, fixed, hand-designed
+shape vocabulary via *any* geometric distance threshold is inherently
+lossy — confirmed by checking real Monty's own source, which has no
+analogous step: its SM emits dense per-point features and its LM matches
+them via evidence accumulation against learned templates, never rounding a
+continuous shape into a hand-designed taxonomy first.
+
+**The redesign**, reusing existing infrastructure rather than inventing a
+parallel system:
+- **`PrimitiveGraphLM`** — a genuine taught `LearningModule` for Tier 1,
+  structurally parallel to `CharacterGraphLM`: primitive shapes are taught
+  by drawing + labeling an example, exactly like teaching a character, and
+  matched via the same order/direction-tolerant alignment search
+  `GraphMatcher` already used, extracted into a shared `AlignmentSearch`/
+  `AlignmentScore` utility (share the *algorithm*, not the *data shape* —
+  see §7 for why `PrimitiveGraphLM` and `CharacterGraphLM` deliberately
+  stayed two classes rather than one generic `EvidenceGraphLM`, despite
+  real Monty using exactly one class at every hierarchy level).
+- **`StrokeSegmenter`** — a Viterbi-style dynamic-programming segmentation
+  replacing the old per-point local threshold decision with a *global* one:
+  finds the partition of a whole stroke into windows maximizing total
+  evidence (log-evidence, so it doesn't always prefer more, shorter
+  primitives — one of three real bugs found and fixed empirically, see §7).
+- `PrimitiveMeasurement` generalized from a closed `Line`/`Arc` sealed type
+  to one open `data class(label, extent)` — primitives are now arbitrary
+  taught labels, not a fixed two-variant enum.
+- `PrimitiveSensorModule` (the class) was deleted, then later reinstated as
+  a different class of the same name — a thin `SensorModule` wrapper around
+  `PrimitiveGraphLM`/`StrokeSegmenter` — once it became clear
+  `MontyOrchestrator` had absorbed that class's responsibilities by
+  default rather than by design; see §7's final entry.
+
+**Exit:** verified against all three concrete real-drawing failures that
+motivated the redesign (a small hook next to a long tail, a single
+gently-curving stroke, an S-curve), each now a permanent regression test in
+`MontyOrchestratorTest`; all `lib` tests pass. `app`'s teach UI still only
+knew how to teach characters at this point — nothing could be recognized
+end to end through the real app yet (closed by Phase 5, below).
+
+### Phase 5 — Teach-Primitives UI + Background Matching ✅ Done
+*(Also not in the original plan — a direct consequence of Phase 4.5: the
+Tier-1 redesign left no way to teach the primitive templates
+`PrimitiveGraphLM` now depends on, so nothing could be recognized end to
+end through the real app until this shipped. Full detail in §7's last three
+entries.)*
+
+- `RecognizerViewModel` gained a `TeachMode` (`PRIMITIVES`/`CHARACTERS`,
+  defaulting to `PRIMITIVES`) reading/writing `PrimitiveGraphLM` directly
+  (not through `MontyOrchestrator`, whose reason to exist — coordinating
+  segmentation during a character episode — doesn't apply to teaching one
+  primitive in isolation). A primitive is one completed stroke, a `lib`
+  constraint (`PrimitiveGraphLM.resample()` has no stroke-boundary
+  concept), not a UI convenience.
+- Character-teaching is gated behind having taught at least one primitive
+  — otherwise every primitive silently degrades to `"unknown"` and a
+  character taught on top of that permanently poisons `GraphMemory`.
+- Primitive teaching got the same recognize/confirm/correct/disambiguate
+  flow characters already had (`PrimitiveTeachingPanel`), reusing
+  `possibleMatches()`/`recognitionResult()` — pulled out of
+  `CharacterGraphLM.kt` into a standalone `RecognitionResult.kt` since
+  neither function was ever character-specific.
+- **Follow-up fix, same phase:** all `lib` access from `RecognizerViewModel`
+  was synchronous on the main thread, and visibly froze the UI as taught
+  templates/characters accumulated. Fixed by confining all
+  orchestrator/LM/memory access to one serial dispatcher
+  (`Dispatchers.Default.limitedParallelism(1)`), with each method bundling
+  its mutation and subsequent state read into one dispatch (never split
+  across two) to avoid a data race between a queued mutation and a
+  separately-dispatched read of the same mutable `lib` state.
+- **A related structural fix, same phase:** `SensorModule<T>` had drifted
+  to zero implementations after Phase 4.5 deleted the original
+  `PrimitiveSensorModule` and never reinstated anything behind the
+  interface — `MontyOrchestrator` had grown the resample/segment/emit
+  logic inline instead. Reinstated a concrete `PrimitiveSensorModule :
+  SensorModule<RawTouchObservation>` (a different class than the deleted
+  one) wrapping `PrimitiveGraphLM`/`StrokeSegmenter`, matching how real
+  Monty's `TwoDSensorModule` stays a concrete `SensorModule` even though its
+  own feature extraction also needs more than one raw sample.
+
+**Exit:** teach a handful of primitives, then teach a multi-primitive
+character built from them, end to end through the real `app` UI for the
+first time. Verified via `./gradlew :lib:test :lib:ktlintCheck
+:app:ktlintCheck :app:compileDebugKotlin` (81 `lib` tests as of this
+writing, all passing); **no on-device verification performed** (standing
+project rule, see `CLAUDE.md`) — confirming the UI flow and that the
+threading fix actually resolved the freeze is the user's to do.
+
+### Phase 5.5a — Stroke Capture/Export Tool ✅ Done
+*(Also not in the original plan. Blocked Phase 5.5b before it could even
+start: tuning against "real handwriting samples" needs real handwriting
+data in a `lib` test, and there was no way to get it there — no
+serialization/export existed anywhere in `app`, and Claude cannot drive a
+connected device to generate that data itself, per `CLAUDE.md`. Asked the
+user how to source calibration data; they chose building this tool over a
+synthetic-jitter-only pass or waiting for manually-transcribed bug
+reports.)*
+
+- `RecognizerViewModel` gained an opt-in, off-by-default `captureEnabled`
+  toggle and a `capturedExamples: List<CapturedExample>` buffer
+  (`app/.../capture/StrokeCapture.kt`). A private `captureIfEnabled()`
+  records the exact strokes + label at the one point both are already in
+  hand — the top of `onTeach`/`onTeachPrimitive` — so "Confirm" (which
+  delegates to the same methods) is captured for free too, giving natural
+  repeated-variation examples of the same label without extra wiring.
+  Off by default deliberately: this records the user's own handwriting.
+- Export (`app/.../capture/CaptureExporter.kt`) writes a JSON file
+  (`{"schemaVersion": 1, "captures": [{"mode", "label", "timestampMs",
+  "strokes": [[{"x","y"}, ...], ...]}, ...]}` — a direct mirror of
+  `List<List<RawPoint>>`, the shape `MontyOrchestrator`/`PrimitiveGraphLM`
+  already consume, so a future `lib`-side fixture loader needs no
+  reshaping) to the app's cache dir and hands it to the system share sheet
+  via a `FileProvider` (`androidx.core`, already a dependency — no new
+  library) — the user picks where it goes (Drive/email/Files/...)
+  themselves; nothing leaves the device through this app's own code, and
+  no storage permission is needed.
+- Uses `org.json` (already on the Android platform — zero new *production*
+  dependency); a real `org.json:json` jar was added as a `testImplementation`-only
+  dependency (`gradle/libs.versions.toml`) since Android's bundled `org.json`
+  throws on the host JVM without Robolectric, which this project doesn't use.
+- `DrawingScreen.kt` gained a small "Capture: on/off (N)" + "Export N
+  examples" control in the same debug corner as the existing `LmState`
+  toggle — plain `Button`/`OutlinedButton`, this app's established
+  no-new-visual-idiom convention for small controls.
+- New `app/src/test/kotlin/com/eta/tbp/app/capture/StrokeCaptureTest.kt` —
+  the first test `app` has ever had (confirmed: no `app/src/test` directory
+  existed before this) — a schema round-trip smoke test for
+  `toCaptureJson()`, matching §6's "thin adapter" testing philosophy for
+  `app` rather than exhaustive coverage.
+- Verified via `./gradlew :lib:test :app:test :lib:ktlintCheck
+  :app:ktlintCheck :app:assembleDebug` — `lib` untouched (81 tests still
+  pass), `app`'s 2 new tests pass, both modules' ktlint clean, `app`
+  assembles. **No on-device verification performed** (standing project
+  rule) — using the toggle/export flow for real, and actually producing a
+  calibration export, is the user's to do next; see Phase 5.5b below for
+  what to draw.
+
+### Phase 5.5b — Merge/Spawn Tuning (2–3 days) — *(originally "Phase 5";
+renumbered — see the note at the head of §5)* **Not started, blocked**
+Tune `GraphMemory.MERGE_THRESHOLD` (still the untouched `0.75f` placeholder
+from Phase 3) and `matchScore` against real handwriting samples — this is
+Monty's own `detect_new_object_*` mechanism, not a custom heuristic bolted
+on afterward. This is the actual next phase: everything that shipped as
+Phase 4.5/5/5.5a above was necessary supporting work (a working Tier-1 to
+teach, a UI to teach it with, a way to export what gets drawn), not a
+substitute for this tuning pass. Also revisit the segmentation constants
+`StrokeSegmenter` introduced (`MIN_WINDOW_LENGTH`/`SEGMENT_PENALTY`),
+validated so far only against the specific repro shapes in §7, not a broad
+sweep of real handwriting.
+
+**Blocked on**: the user turning on Phase 5.5a's capture toggle and
+drawing — ideally the same label 3-4 times with natural variation, a
+couple of clearly different labels, and one multi-stroke character drawn
+with different stroke order at least once (directly targets this phase's
+exit criteria below) — then exporting and handing back the resulting
+`captures-*.json`. Once that exists: add it under
+`lib/src/test/resources/realcaptures/`, add a small JSON-fixture loader to
+`lib`'s test sources (a `testImplementation`-only `org.json:json`
+dependency there too, same reasoning as Phase 5.5a's — `lib` has zero
+Android SDK on its classpath even in tests), and add real-data test cases
+to `GraphMemoryTest`/`MontyOrchestratorTest` at the actual merge/spawn
+decision boundary (today's coverage is binary — near-1.0 or near-0.0 —
+with nothing exercising ~0.75 under realistic variation).
+
 **Exit:** natural variation of the same label settles into one generalized
 model; a structurally different stroke order for the same label spawns a
 second variant instead of corrupting the first.
@@ -1169,7 +1381,7 @@ deliberately small.
   its own published work, same as the multi-stroke composition point
   above), and it would trade one class of tunable threshold (fit tests)
   for another (an evidence-decay boundary threshold) rather than removing
-  tunables altogether. Revisit if Phase 5's real-handwriting tuning turns
+  tunables altogether. Revisit if Phase 5.5b's real-handwriting tuning turns
   up genuine primitive-level ambiguity (a segment that's a borderline
   line/arc call, or the tight-loop-vs-corner gap noted above) that the
   current fit tests can't represent.

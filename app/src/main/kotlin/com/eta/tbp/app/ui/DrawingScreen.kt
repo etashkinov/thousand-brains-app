@@ -17,7 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.eta.tbp.app.capture.exportCaptures
 import com.eta.tbp.app.viewmodel.RecognizerViewModel
 import com.eta.tbp.app.viewmodel.TeachMode
 
@@ -62,11 +64,22 @@ fun DrawingScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
             }
+            val context = LocalContext.current
             Column(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 horizontalAlignment = Alignment.End,
             ) {
                 LmStateToggleButton(expanded = viewModel.showLmState, onToggle = viewModel::onToggleLmState)
+                Spacer(Modifier.height(8.dp))
+                CaptureControls(
+                    enabled = viewModel.captureEnabled,
+                    capturedCount = viewModel.capturedExamples.size,
+                    onToggle = viewModel::onToggleCapture,
+                    onExport = {
+                        exportCaptures(context, viewModel.capturedExamples)
+                        viewModel.onCapturedExamplesExported()
+                    },
+                )
                 if (viewModel.showLmState) {
                     Spacer(Modifier.height(8.dp))
                     LmStateOverlay(
@@ -169,5 +182,31 @@ private fun ModeButton(
         Button(onClick = onClick, enabled = enabled) { Text(text) }
     } else {
         OutlinedButton(onClick = onClick, enabled = enabled) { Text(text) }
+    }
+}
+
+/**
+ * A debug affordance for Phase 5.5a (see IMPLEMENTATION_PLAN.md) — records
+ * taught examples verbatim while [enabled], for later export as real
+ * -handwriting calibration data. Off by default; this is recording the
+ * user's own handwriting, so turning it on is a deliberate act, not
+ * something the teach/recognize flow does silently.
+ */
+@Composable
+private fun CaptureControls(
+    enabled: Boolean,
+    capturedCount: Int,
+    onToggle: () -> Unit,
+    onExport: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.End) {
+        OutlinedButton(onClick = onToggle) {
+            Text(if (enabled) "Capture: on ($capturedCount)" else "Capture: off")
+        }
+        if (capturedCount > 0) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onExport) { Text("Export $capturedCount examples") }
+        }
     }
 }

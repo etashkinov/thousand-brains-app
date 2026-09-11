@@ -6,6 +6,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.eta.tbp.app.capture.CaptureMode
+import com.eta.tbp.app.capture.CapturedExample
 import com.eta.tbp.app.sensor.toRawPoints
 import com.eta.tbp.lib.lm.CharacterGraphLM
 import com.eta.tbp.lib.lm.PrimitiveGraphLM
@@ -149,6 +151,14 @@ class RecognizerViewModel : ViewModel() {
     var taughtPrimitiveLabels by mutableStateOf<Set<String>>(emptySet())
         private set
 
+    /** Whether taught examples are being recorded for later export — off by default; this records the user's own handwriting, so it's opt-in, not silent. */
+    var captureEnabled by mutableStateOf(false)
+        private set
+
+    /** Examples recorded since capture was turned on (or since the last export) — see [onCapturedExamplesExported]. */
+    var capturedExamples by mutableStateOf<List<CapturedExample>>(emptyList())
+        private set
+
     fun onSelectMode(newMode: TeachMode) {
         if (newMode == TeachMode.CHARACTERS && taughtPrimitiveLabels.isEmpty()) return
         mode = newMode
@@ -174,6 +184,7 @@ class RecognizerViewModel : ViewModel() {
     fun onTeachPrimitive(label: String) {
         val stroke = primitiveStroke ?: return
         if (label.isBlank()) return
+        captureIfEnabled(CaptureMode.PRIMITIVE, label, listOf(stroke))
         taughtPrimitiveLabel = label
         primitiveStroke = null
         primitiveEvidence = emptyMap()
@@ -246,6 +257,7 @@ class RecognizerViewModel : ViewModel() {
 
     fun onTeach(label: String) {
         if (label.isBlank() || taughtLabel != null) return
+        captureIfEnabled(CaptureMode.CHARACTER, label, strokes)
         taughtLabel = label
         viewModelScope.launch {
             val snapshot =
@@ -281,6 +293,38 @@ class RecognizerViewModel : ViewModel() {
 
     fun onToggleLmState() {
         showLmState = !showLmState
+    }
+
+    fun onToggleCapture() {
+        captureEnabled = !captureEnabled
+    }
+
+    /** Clears the buffer after [com.eta.tbp.app.capture.exportCaptures] has handed it off to the share sheet. */
+    fun onCapturedExamplesExported() {
+        capturedExamples = emptyList()
+    }
+
+    /**
+     * Records one taught example verbatim, if [captureEnabled] — see the
+     * class doc's [taughtPrimitiveLabels] paragraph and IMPLEMENTATION_PLAN.md's
+     * Phase 5.5a. Only touches plain Compose state (never `lib`), so unlike
+     * every other mutation here, this runs synchronously on Main — no
+     * [matchingDispatcher] involved.
+     */
+    private fun captureIfEnabled(
+        mode: CaptureMode,
+        label: String,
+        strokes: List<List<Offset>>,
+    ) {
+        if (!captureEnabled) return
+        capturedExamples =
+            capturedExamples +
+            CapturedExample(
+                mode = mode,
+                label = label,
+                strokes = strokes.map { it.toRawPoints() },
+                timestampMs = System.currentTimeMillis(),
+            )
     }
 
     /** Everything [applyLmState] needs, captured in one [matchingDispatcher] pass — see the class doc for why bundling matters. */
