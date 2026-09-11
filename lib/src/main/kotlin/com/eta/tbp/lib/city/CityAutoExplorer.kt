@@ -14,20 +14,25 @@ import kotlin.random.Random
  * discriminating), checking the recognition state after every visit:
  *
  * - [RecognitionResult.Recognized] (unique match) → stop, report it.
- * - [RecognitionResult.Ambiguous] or [RecognitionResult.Unknown] → keep
- *   visiting the next cell; neither is a final answer on its own, only
- *   "not resolved yet."
+ * - [RecognitionResult.Ambiguous] (multiple known cities still fit) → ask
+ *   the LM (via [CityExplorer.suggestNextLocation], its own embedded Goal
+ *   State Generator — see [com.eta.tbp.lib.lm.EvidenceGraphLM.suggestNextLocation])
+ *   where visiting next would best tell the tied candidates apart, rather
+ *   than picking blindly. Real Monty does the same once its own hypotheses
+ *   narrow.
+ * - [RecognitionResult.Unknown], or no suggestion available → nothing to
+ *   disambiguate between yet, so just visit the next random cell.
  * - Every cell visited with still nothing uniquely recognized → the whole
  *   city has been toured and no taught one explains it, so [labelForNewCity]
  *   is taught as a new one in [memory].
  *
- * Every cell in the grid is visited, not just landmarks: a real explorer
- * doesn't know in advance which cells hold a [MapFeature] worth recording
- * — that's discovered by visiting, exactly like [CitySensorModule] mirrors
- * a real Monty `SensorModule`'s per-observation reporting. Touring the
- * whole grid stays cheap regardless, since [CitySensorModule] reports an
- * empty cell as `passMessage = false` — one lookup, never touching the
- * LM's evidence.
+ * Every cell in the grid is a *candidate* to visit, not just landmarks: a
+ * real explorer doesn't know in advance which cells hold a [MapFeature]
+ * worth recording — that's discovered by visiting, exactly like
+ * [CitySensorModule] mirrors a real Monty `SensorModule`'s per-observation
+ * reporting. Touring stays cheap regardless of how much of the grid ends
+ * up visited, since [CitySensorModule] reports an empty cell as
+ * `passMessage = false` — one lookup, never touching the LM's evidence.
  */
 class CityAutoExplorer(
     private val cityMap: CityMap,
@@ -53,22 +58,28 @@ class CityAutoExplorer(
     fun explore(labelForNewCity: String): Outcome {
         val sensor = CitySensorModule(sensorId = "$lmId-sensor", cityMap = cityMap)
         val explorer = CityExplorer(sensor, EvidenceGraphLM(lmId = lmId, memory = memory))
-        val cells = allCells().shuffled(random)
+        val remainingCells = allCells().shuffled(random).toMutableList()
 
         explorer.beginExploration()
-        for ((index, cell) in cells.withIndex()) {
-            explorer.visit(cell)
+        var cellsVisited = 0
+        while (remainingCells.isNotEmpty()) {
+            val nextCell = explorer.suggestNextLocation()?.takeIf { it in remainingCells } ?: remainingCells.first()
+            remainingCells.remove(nextCell)
+
+            explorer.visit(nextCell)
+            cellsVisited++
+
             val result = explorer.currentResult()
             if (result is RecognitionResult.Recognized) {
                 explorer.endExploration()
-                return Outcome.Recognized(result.label, result.confidence, cellsVisited = index + 1)
+                return Outcome.Recognized(result.label, result.confidence, cellsVisited)
             }
             // Ambiguous or Unknown: not resolved yet, keep moving.
         }
 
         explorer.endExploration()
         explorer.teach(labelForNewCity)
-        return Outcome.Added(labelForNewCity, cellsVisited = cells.size)
+        return Outcome.Added(labelForNewCity, cellsVisited)
     }
 
     private fun allCells(): List<MapLocation> =

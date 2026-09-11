@@ -18,6 +18,11 @@ class FloatLocation(
         return FloatLocation(location.mapIndexed { index, f -> f - from.location[index] }.toFloatArray())
     }
 
+    override fun plus(displacement: Location): Location {
+        if (displacement !is FloatLocation || location.size != displacement.location.size) return Location.Infinity
+        return FloatLocation(location.mapIndexed { index, f -> f + displacement.location[index] }.toFloatArray())
+    }
+
     override fun magnitude(): Float = sqrt(location.sumOf { (it * it).toDouble() }).toFloat()
 
     override fun mergedWith(

@@ -2,6 +2,7 @@ package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.memory.GraphNode
 
 /**
  * Mirrors [com.eta.tbp.lib.orchestrator.MontyOrchestrator]'s
@@ -58,4 +59,18 @@ class CityExplorer(
      * exploring on anything other than a unique [RecognitionResult.Recognized].
      */
     fun currentResult(): RecognitionResult = lm.recognitionResult()
+
+    /** The cells observed so far this exploration, in visit order — direct introspection, same spirit as [EvidenceGraphLM.currentNodes]. */
+    fun currentNodes(): List<GraphNode> = lm.currentNodes()
+
+    /**
+     * Where [lm] suggests looking next to tell its currently tied
+     * hypotheses apart — see [EvidenceGraphLM.suggestNextLocation]. The
+     * cast is safe: every [com.eta.tbp.lib.memory.Location] [lm] has ever
+     * been given by [sensorModule] is a [MapLocation], so anything it
+     * predicts back is one too. Null under the same conditions
+     * [EvidenceGraphLM.suggestNextLocation] is — [CityAutoExplorer] falls
+     * back to its own random pick in that case.
+     */
+    fun suggestNextLocation(): MapLocation? = lm.suggestNextLocation() as? MapLocation
 }

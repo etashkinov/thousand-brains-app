@@ -7,18 +7,24 @@ package com.eta.tbp.lib.memory
  * character can start anywhere in touch-space, and a city explorer doesn't
  * know their starting cell's true coordinate in the taught map either — so
  * every comparison first picks an anchor pair and re-bases every other
- * node's [Location] to it before comparing. Anchoring tries every
- * (stored node, candidate node) pair whose features are compatible, not
- * just one fixed candidate node: an automated random-order explorer
- * ([com.eta.tbp.lib.city.CityAutoExplorer]) can't guarantee the *first*
- * node it happens to observe is one the true matching city shares — if it
- * isn't, anchoring on it alone would permanently stall the whole episode
- * at zero evidence, since candidate nodes are never removed from the
- * buffer mid-episode. These graphs are a handful of nodes (a character's
- * primitives, a city's landmarks), so the full O(stored × candidate) anchor
- * search this requires costs nothing in absolute terms — correctness here
- * is worth more than a constant-factor saving that only matters at a scale
- * this app doesn't operate at.
+ * node's [Location] to it before comparing. Anchoring only needs to try
+ * *one* fixed candidate node (its very first) against every feature-
+ * compatible stored node — O(stored size) anchor attempts, not every
+ * (stored node, candidate node) pair.
+ *
+ * That's safe even for an automated random-order explorer
+ * ([com.eta.tbp.lib.city.CityAutoExplorer]) that can't guarantee its first
+ * observation is one the true matching city shares, because [scoreForAnchor]
+ * is a hard veto per node: if *any* buffered node's feature has zero
+ * feature-compatible counterpart anywhere in a stored model, that model
+ * scores zero no matter which node was chosen as the anchor — the anchor
+ * only decides the assumed translation, not whether each individual node
+ * has a match at all. So trying every candidate node as an alternate anchor
+ * can never rescue a case anchoring on the first node couldn't already
+ * resolve; the two searches always agree. What genuinely matters instead is
+ * never letting an unrecognized first observation *become* the anchor in
+ * the first place — see [com.eta.tbp.lib.lm.EvidenceGraphLM.matchingStep]'s
+ * own doc for how it defers to [GraphMemory.hasCompatibleFeature] for that.
  *
  * There is no assumption that nodes arrive in a fixed order either: unlike
  * a pen stroke's inherent draw order, a city can be explored one arbitrary
@@ -94,6 +100,29 @@ object GraphMatcher {
         }
     }
 
+    /**
+     * Every node in [stored], translated into [observed]'s own frame of
+     * reference via the best anchor pairing between the two — including
+     * [stored] nodes that have no counterpart in [observed] yet, i.e. cells
+     * not visited this episode. [com.eta.tbp.lib.city.CityGoalGenerator]
+     * uses this to predict where a leading hypothesis's still-unseen
+     * landmarks should be, mirroring real Monty's own `EvidenceGoalGenerator`
+     * projecting a hypothesis graph into the current sensed frame to find a
+     * disambiguating point to move to next. Null under the same conditions
+     * [bestAlignedWindow] is.
+     */
+    fun predictedLocations(
+        stored: GraphObjectModel,
+        observed: List<GraphNode>,
+    ): List<GraphNode>? {
+        if (stored.nodes.isEmpty() || observed.isEmpty()) return null
+        val anchor = bestAnchor(stored.nodes, observed) ?: return null
+        return stored.nodes.map { storedNode ->
+            val relativeToAnchor = storedNode.location.displacement(anchor.targetNode.location)
+            storedNode.copy(location = anchor.candidateNode.location.plus(relativeToAnchor))
+        }
+    }
+
     /** [score] is computed once, while searching for the best anchor in [bestAnchor] — callers reuse it rather than re-scoring the chosen anchor a second time. */
     private data class Anchor(
         val targetNode: GraphNode,
@@ -112,19 +141,18 @@ object GraphMatcher {
         candidate: List<GraphNode>,
     ): Float = bestAnchor(target, candidate)?.score ?: NO_MATCH
 
-    /** Tries every feature-compatible (target node, candidate node) pair as the shared reference point — see class doc for why every candidate node needs a turn, not just one. */
+    /** Anchors on [candidate]'s first node alone, tried against every feature-compatible node in [target] — see class doc for why one fixed candidate node is enough. */
     private fun bestAnchor(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
     ): Anchor? {
+        val anchorCandidateNode = candidate.firstOrNull() ?: return null
         var best: Anchor? = null
-        for (anchorCandidateNode in candidate) {
-            for (targetNode in target) {
-                if (targetNode.feature.difference(anchorCandidateNode.feature).isInfinite()) continue
-                val score = scoreForAnchor(target, candidate, targetNode, anchorCandidateNode)
-                if (best == null || score > best.score) {
-                    best = Anchor(targetNode, anchorCandidateNode, score)
-                }
+        for (targetNode in target) {
+            if (targetNode.feature.difference(anchorCandidateNode.feature).isInfinite()) continue
+            val score = scoreForAnchor(target, candidate, targetNode, anchorCandidateNode)
+            if (best == null || score > best.score) {
+                best = Anchor(targetNode, anchorCandidateNode, score)
             }
         }
         return best

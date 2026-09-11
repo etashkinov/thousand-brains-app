@@ -7,6 +7,7 @@ import com.eta.tbp.lib.memory.GraphMatcher
 import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.memory.edgeChainOf
 
 /**
@@ -39,6 +40,24 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * [GraphMatcher.partialMatchScore] scores that growing shape against every
  * stored model's same-length window.
  *
+ * [nodeBuffer] itself keeps every observed node in strict visit order,
+ * unconditionally — [teach] needs the *complete* sequence even when nothing
+ * in it matched anything taught yet (that's exactly what teaching a
+ * genuinely new object looks like). Matching is different: [GraphMatcher]
+ * anchors on whichever node it's given first (see its own doc for why one
+ * fixed node is enough), and a node with zero feature-compatible match
+ * anywhere in a taught model dooms that model to zero evidence for the rest
+ * of the episode. So [evidenceSnapshot] doesn't hand [GraphMatcher]
+ * [nodeBuffer] as observed — it hands it [matchingCandidates]'s view, which
+ * drops any node [GraphMemory.hasCompatibleFeature] doesn't recognize
+ * anywhere (it could never help a score anyway) rather than letting it
+ * monopolize the anchor slot or inflate the candidate count past a smaller
+ * taught model's own node count. An automated explorer starting from a
+ * random, unknown location ([com.eta.tbp.lib.city.CityAutoExplorer]) can't
+ * guarantee its first observation is a discriminating one; this is what
+ * lets a later, recognized observation still anchor the match instead of
+ * an earlier unrecognized one permanently stalling it.
+ *
  * [getOutput] mirrors real Monty's `get_output()`: a single-hypothesis
  * point estimate (the current best label + its confidence), structurally
  * identical to what a SensorModule would emit — never a full evidence map.
@@ -55,16 +74,28 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * but this app's v1 design is a human teaching by drawing + labeling, so
  * [teach] is this app's honest equivalent of that ground truth, not a
  * deviation from the port.
+ *
+ * [suggestNextLocation] is this class's own embedded Goal State Generator
+ * (mirrors real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s
+ * doc): a third output channel alongside [getOutput]/[sendOutVote], not
+ * folded into either, for whatever explores on this LM's behalf (e.g.
+ * [com.eta.tbp.lib.city.CityAutoExplorer]) to consult instead of choosing
+ * blindly. Entirely a function of this LM's own state — [memory] and what
+ * it's already observed/checked — never anything about the domain under
+ * exploration itself, which is exactly what keeps it generic over any
+ * [Location]/[Feature] pair rather than tied to one caller's domain.
  */
 class EvidenceGraphLM(
     override val lmId: String,
     private val memory: GraphMemory,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     private val nodeBuffer = mutableListOf<GraphNode>()
+    private val checkedLocations = mutableSetOf<Location>()
     private var lastCompletedNodes: List<GraphNode>? = null
 
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
+            message.location?.let { checkedLocations += it }
             if (!message.passMessage) continue
             nodeBuffer.add(toGraphNode(message))
         }
@@ -97,9 +128,31 @@ class EvidenceGraphLM(
      */
     fun evidenceSnapshot(): Map<String, Float> {
         if (nodeBuffer.isEmpty()) return emptyMap()
+        val candidateNodes = matchingCandidates()
         return memory.allLabels().associateWith { label ->
-            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodeBuffer) }
+            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, candidateNodes) }
         }
+    }
+
+    /**
+     * [nodeBuffer] with any node [GraphMemory.hasCompatibleFeature] doesn't
+     * recognize anywhere dropped — not just reordered out of the anchor
+     * slot: a node nothing taught has ever seen the like of can't
+     * contribute positively to *any* model's score (see class doc), so
+     * leaving it in would only ever inflate [GraphMatcher.partialMatchScore]'s
+     * candidate count past a smaller taught model's own node count, or trip
+     * its per-node hard veto — never help. Removing it also happens to
+     * promote the next recognized node into the anchor slot for free,
+     * without needing a separate reordering step. Unchanged if [memory] has
+     * nothing taught yet ([teach]ing a first-ever object needs every
+     * observation kept), or if nothing in [nodeBuffer] is recognized at all
+     * (falls back to the full, unfiltered buffer — evidence comes out at
+     * zero regardless, via the same hard veto).
+     */
+    private fun matchingCandidates(): List<GraphNode> {
+        if (memory.allLabels().isEmpty()) return nodeBuffer
+        val recognized = nodeBuffer.filter { memory.hasCompatibleFeature(it.feature) }
+        return recognized.ifEmpty { nodeBuffer }
     }
 
     /**
@@ -111,8 +164,27 @@ class EvidenceGraphLM(
      */
     fun currentNodes(): List<GraphNode> = nodeBuffer.toList()
 
+    /**
+     * Where to look next to tell the currently tied hypotheses apart — see
+     * [suggestGoalLocation]'s own doc, and real Monty's `propose_goals()`
+     * pipeline this mirrors: a separate output channel from [getOutput],
+     * not folded into its `CmpMessage` (real Monty keeps movement guidance
+     * out of `get_output()`/`send_out_vote()` too). Null whenever there's
+     * nothing to disambiguate — not [RecognitionResult.Ambiguous] yet, or
+     * nothing left unchecked to suggest — in which case the caller should
+     * fall back to its own default exploration policy (e.g. a random
+     * unchecked location), the same way real Monty falls back to a naive
+     * policy when goal-driven actions are off.
+     */
+    fun suggestNextLocation(): Location? {
+        val result = recognitionResult()
+        if (result !is RecognitionResult.Ambiguous) return null
+        return suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations)
+    }
+
     override fun preEpisode() {
         nodeBuffer.clear()
+        checkedLocations.clear()
     }
 
     override fun postEpisode() {

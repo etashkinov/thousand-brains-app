@@ -144,6 +144,36 @@ class EvidenceGraphLMTest {
     }
 
     @Test
+    fun `suggestNextLocation proposes where the tied hypotheses disagree, using this LM's own memory and observations`() {
+        val memory = GraphMemory()
+        val evidenceGraphLM = newLm(memory = memory)
+
+        // "L" and "L2" agree on their first two nodes but differ in the third.
+        drive(evidenceGraphLM, listOf(message(0f, 0f, "line"), message(0f, 1f, "line"), message(1f, 1f, "arc")))
+        evidenceGraphLM.teach("L")
+        drive(evidenceGraphLM, listOf(message(0f, 0f, "line"), message(0f, 1f, "line"), message(1f, -1f, "arc")))
+        evidenceGraphLM.teach("L2")
+
+        evidenceGraphLM.preEpisode()
+        evidenceGraphLM.matchingStep(listOf(message(50f, 50f, "line")))
+        evidenceGraphLM.matchingStep(listOf(message(50f, 51f, "line")))
+        assertTrue(evidenceGraphLM.recognitionResult() is RecognitionResult.Ambiguous)
+
+        val suggestion = evidenceGraphLM.suggestNextLocation()
+
+        assertTrue(
+            "expected one candidate's own predicted arc location but was $suggestion",
+            suggestion == FloatLocation(51f, 51f) || suggestion == FloatLocation(51f, 49f),
+        )
+    }
+
+    @Test
+    fun `suggestNextLocation is null when the result isn't Ambiguous`() {
+        val evidenceGraphLM = newLm()
+        assertEquals(null, evidenceGraphLM.suggestNextLocation())
+    }
+
+    @Test
     fun `partial evidence during an in-progress episode narrows down as more nodes arrive`() {
         val memory = GraphMemory()
         val evidenceGraphLM = newLm(memory = memory)
@@ -161,6 +191,44 @@ class EvidenceGraphLMTest {
         evidenceGraphLM.matchingStep(listOf(message(10f, 11f, "line")))
         // A second "line" node at the L's own relative offset only continues to fit "L".
         assertEquals(listOf("L"), evidenceGraphLM.possibleMatches())
+    }
+
+    @Test
+    fun `an unrecognized first node doesn't stop a later, recognized node from anchoring the match`() {
+        val memory = GraphMemory()
+        val evidenceGraphLM = newLm(memory = memory)
+
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
+
+        evidenceGraphLM.preEpisode()
+        // "totally-novel-shape" doesn't exist anywhere in memory -- if it monopolized the anchor slot, "line" would be stuck at zero evidence for the rest of the episode.
+        evidenceGraphLM.matchingStep(listOf(message(500f, 500f, "totally-novel-shape")))
+        evidenceGraphLM.matchingStep(lineShape(originX = 40f, originY = 40f))
+
+        assertEquals(listOf("line"), evidenceGraphLM.possibleMatches())
+    }
+
+    @Test
+    fun `teaching still records every observed node even when none of them matched anything taught`() {
+        val memory = GraphMemory()
+        val evidenceGraphLM = newLm(memory = memory)
+
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
+
+        // A shape sharing no feature at all with anything taught -- should still be teachable as its own new object.
+        drive(evidenceGraphLM, listOf(message(0f, 0f, "square"), message(1f, 0f, "square"), message(1f, 1f, "square")))
+        evidenceGraphLM.teach("square")
+
+        assertEquals(setOf("line", "square"), memory.allLabels())
+        assertEquals(
+            3,
+            memory
+                .candidatesForLabel("square")
+                .single()
+                .nodes.size,
+        )
     }
 
     @Test

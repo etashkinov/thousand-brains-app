@@ -13,6 +13,9 @@ interface Location {
     /** The vector from [from] to this location. Also used to diff two vectors themselves — subtraction is subtraction either way, so [GraphMatcher] reuses it to compare two displacements. */
     fun displacement(from: Location): Location
 
+    /** This location translated by [displacement] — the inverse of [displacement]: `a.displacement(b).let(b::plus) == a`. Used to project a stored node into another location's frame (e.g. [GraphMatcher.predictedLocations]), the counterpart of subtracting two locations to get a vector. */
+    fun plus(displacement: Location): Location
+
     /** This location's scalar size — called on a [displacement] result to score positional error. 0 = identical. */
     fun magnitude(): Float
 
@@ -25,6 +28,8 @@ interface Location {
 
     object Infinity : Location {
         override fun displacement(from: Location) = this
+
+        override fun plus(displacement: Location) = this
 
         override fun magnitude() = Float.POSITIVE_INFINITY
 

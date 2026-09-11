@@ -32,6 +32,11 @@ data class MapLocation(
         return MapLocation(x - from.x, y - from.y)
     }
 
+    override fun plus(displacement: Location): Location {
+        if (displacement !is MapLocation) return Location.Infinity
+        return MapLocation(x + displacement.x, y + displacement.y)
+    }
+
     override fun magnitude(): Float = sqrt((x * x + y * y).toFloat())
 
     override fun mergedWith(

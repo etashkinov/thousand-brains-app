@@ -37,6 +37,18 @@ class GraphMemory {
 
     fun allLabels(): Set<String> = models.keys
 
+    /**
+     * Whether any taught model, under any label, has a node whose feature
+     * could match [feature] (a finite [Feature.difference], not necessarily
+     * zero). [com.eta.tbp.lib.lm.EvidenceGraphLM] uses this to pick which
+     * buffered node is worth anchoring matching on — see its own
+     * `matchingOrder()` doc.
+     */
+    fun hasCompatibleFeature(feature: Feature): Boolean =
+        models.values.any { variants ->
+            variants.any { model -> model.nodes.any { !it.feature.difference(feature).isInfinite() } }
+        }
+
     fun snapshot(): Map<String, List<GraphObjectModel>> = models.mapValues { it.value.toList() }
 
     fun restore(snapshot: Map<String, List<GraphObjectModel>>) {
