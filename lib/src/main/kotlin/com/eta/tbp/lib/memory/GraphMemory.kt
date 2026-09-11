@@ -44,29 +44,31 @@ class GraphMemory {
         snapshot.forEach { (label, variants) -> models[label] = variants.toMutableList() }
     }
 
-    /** Averages [candidate]'s nodes (aligned to [target]'s own order) into the stored model, via each node's own [Location.mergedWith]/[Feature.mergedWith]. */
+    /**
+     * Averages [candidate]'s nodes (aligned to [target]'s own order) into
+     * the stored model, via each node's own [Location.mergedWith]/
+     * [Feature.mergedWith] — an equal-weight blend toward whatever's just
+     * been observed (an exponential moving average, not a running mean
+     * over every exemplar ever taught): [GraphObjectModel] doesn't track
+     * how many exemplars a variant has already absorbed, so there's no
+     * count to weight an incremental merge against.
+     */
     private fun mergeInto(
         target: GraphObjectModel,
         candidate: GraphObjectModel,
     ): GraphObjectModel {
         val alignedWindow = GraphMatcher.bestAlignedWindow(target, candidate) ?: return target
-        val existingWeight = target.exemplarCount.toFloat()
-        val totalWeight = existingWeight + 1f
 
         val mergedNodes =
             target.nodes.mapIndexed { i, storedNode ->
                 val candidateNode = alignedWindow[i]
                 storedNode.copy(
-                    location = storedNode.location.mergedWith(candidateNode.location, existingWeight, totalWeight),
-                    feature = storedNode.feature.mergedWith(candidateNode.feature, existingWeight, totalWeight),
+                    location = storedNode.location.mergedWith(candidateNode.location, selfWeight = 1f, totalWeight = 2f),
+                    feature = storedNode.feature.mergedWith(candidateNode.feature, selfWeight = 1f, totalWeight = 2f),
                 )
             }
 
-        return target.copy(
-            nodes = mergedNodes,
-            edges = edgeChainOf(mergedNodes),
-            exemplarCount = target.exemplarCount + 1,
-        )
+        return target.copy(nodes = mergedNodes, edges = edgeChainOf(mergedNodes))
     }
 
     companion object {

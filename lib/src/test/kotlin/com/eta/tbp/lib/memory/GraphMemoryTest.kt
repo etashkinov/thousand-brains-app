@@ -24,7 +24,7 @@ class GraphMemoryTest {
     private fun modelOf(
         label: String,
         nodes: List<GraphNode>,
-    ) = GraphObjectModel(label, nodes, edgeChainOf(nodes), exemplarCount = 1)
+    ) = GraphObjectModel(label, nodes, edgeChainOf(nodes))
 
     @Test
     fun `teaching a new label creates its first variant`() {
@@ -41,9 +41,7 @@ class GraphMemoryTest {
         memory.addOrMerge(modelOf("a", staircase()), "a")
         memory.addOrMerge(modelOf("a", staircase(jitter = 0.01f)), "a")
 
-        val variants = memory.candidatesForLabel("a")
-        assertEquals(1, variants.size)
-        assertEquals(2, variants.first().exemplarCount)
+        assertEquals(1, memory.candidatesForLabel("a").size)
     }
 
     @Test

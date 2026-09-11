@@ -50,4 +50,12 @@ class CityExplorer(
 
     /** The full evidence breakdown across every taught city — for direct introspection, same spirit as [EvidenceGraphLM.evidenceSnapshot]. */
     fun evidenceSnapshot(): Map<String, Float> = lm.evidenceSnapshot()
+
+    /**
+     * A live look at the recognition state so far this exploration —
+     * unlike [endExploration], this doesn't end the episode, so
+     * [CityAutoExplorer] can check it after every single [visit] and keep
+     * exploring on anything other than a unique [RecognitionResult.Recognized].
+     */
+    fun currentResult(): RecognitionResult = lm.recognitionResult()
 }

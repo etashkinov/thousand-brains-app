@@ -22,7 +22,7 @@ class GraphMatcherTest {
             node(2, 1f, 1f, PrimitiveFeature(label = "line", angle = 0f, extent = 1f)),
         )
 
-    private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes), exemplarCount = 1)
+    private fun modelOf(nodes: List<GraphNode>) = GraphObjectModel("x", nodes, edgeChainOf(nodes))
 
     @Test
     fun `identical graphs score near 1`() {
