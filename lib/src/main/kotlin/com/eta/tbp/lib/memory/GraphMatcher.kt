@@ -6,25 +6,34 @@ package com.eta.tbp.lib.memory
  * its own absolute position in the other's frame of reference — a hand-drawn
  * character can start anywhere in touch-space, and a city explorer doesn't
  * know their starting cell's true coordinate in the taught map either — so
- * every comparison first picks an anchor pair (one stored node, one
- * candidate node, feature-compatible) and re-bases every other node's
- * [Location] to that anchor before comparing, trying every anchor pair and
- * keeping the best-scoring one. There is no assumption that nodes arrive in
- * a fixed order either: unlike a pen stroke's inherent draw order, a city
- * can be explored one arbitrary cell at a time ("not necessarily
- * adjacent"), so a candidate node is matched against whichever stored node
- * it best corresponds to under the anchor, not against a fixed position in
- * the sequence — a genuine domain-driven divergence from a simpler
- * fixed-order comparison, not an invented one (see this project's "default
- * to Monty's own approach" rule).
+ * every comparison first picks an anchor pair and re-bases every other
+ * node's [Location] to it before comparing. Anchoring only needs to try
+ * *one* fixed candidate node (its very first) against every feature-
+ * compatible stored node — O(stored size) anchor attempts, not every
+ * (stored node, candidate node) pair: translation-invariance means any
+ * correctly-paired anchor reveals the whole correspondence, and the true
+ * correspondent for that one candidate node is always among the ones tried.
  *
- * Node comparison is generic over any [Location]/[Feature] pair: a node's
+ * There is no assumption that nodes arrive in a fixed order either: unlike
+ * a pen stroke's inherent draw order, a city can be explored one arbitrary
+ * cell at a time ("not necessarily adjacent"), so once an anchor is fixed,
+ * [findNodeNear] looks up each remaining candidate node's best-matching
+ * stored node by proximity — feature-compatible and closest by
+ * [Location.displacement]/[Location.magnitude] — rather than by position in
+ * the sequence. [findNodeNear] is a plain tolerant nearest-match, not an
+ * exact-equality index: these graphs are a handful of nodes (a character's
+ * primitives, a city's landmarks), so a linear scan costs nothing, and
+ * grading by distance rather than requiring exact equality is what lets a
+ * jittery real-world observation (unlike a city cell's exact grid
+ * coordinate) still match — the same universal-over-[Location] contract
+ * [GraphMemory]'s merge averaging relies on.
+ *
+ * Everything here is generic over any [Location]/[Feature] pair — a node's
  * feature must not be an infinite [Feature.difference] from its candidate
- * match (a hard veto, e.g. a taught label mismatch), and position agreement
- * is scored via [Location.displacement]/[Location.magnitude] — both
+ * match (a hard veto, e.g. a taught label mismatch) — so this object has
+ * zero domain-specific code for either
  * [com.eta.tbp.lib.sensor.FloatLocation]/[com.eta.tbp.lib.sensor.PrimitiveFeature]
- * and [com.eta.tbp.lib.city.MapLocation]/[com.eta.tbp.lib.city.MapFeature]
- * implement, so this object has zero domain-specific code for either tier.
+ * or [com.eta.tbp.lib.city.MapLocation]/[com.eta.tbp.lib.city.MapFeature].
  */
 object GraphMatcher {
     private const val NO_MATCH = 0f
@@ -73,71 +82,64 @@ object GraphMatcher {
     ): List<GraphNode>? {
         if (target.nodes.isEmpty() || candidate.nodes.isEmpty()) return null
         val anchor = bestAnchor(target.nodes, candidate.nodes) ?: return null
-        return target.nodes.map { targetNode -> bestMatchFor(targetNode, candidate.nodes, anchor) }
+        return target.nodes.map { targetNode ->
+            val targetRelative = targetNode.location.displacement(anchor.targetNode.location)
+            findNodeNear(candidate.nodes, anchor.candidateNode, targetRelative, targetNode.feature)?.node ?: candidate.nodes.first()
+        }
     }
 
+    /** [score] is computed once, while searching for the best anchor in [bestAnchor] — callers reuse it rather than re-scoring the chosen anchor a second time. */
     private data class Anchor(
         val targetNode: GraphNode,
         val candidateNode: GraphNode,
+        val score: Float,
+    )
+
+    /** One [nodes] entry found near a query location, and how far off it was. */
+    private data class NearestMatch(
+        val node: GraphNode,
+        val positionError: Float,
     )
 
     private fun anchoredScore(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
-    ): Float {
-        val anchor = bestAnchor(target, candidate) ?: return NO_MATCH
-        return scoreForAnchor(target, candidate, anchor)
-    }
+    ): Float = bestAnchor(target, candidate)?.score ?: NO_MATCH
 
-    /** Tries every feature-compatible (target node, candidate node) pair as the shared reference point, keeping whichever scores [candidate] highest overall. */
+    /** Anchors on [candidate]'s first node alone, tried against every feature-compatible node in [target] — see class doc for why one fixed candidate node is enough. */
     private fun bestAnchor(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
     ): Anchor? {
+        val anchorCandidateNode = candidate.firstOrNull() ?: return null
         var best: Anchor? = null
-        var bestScore = NO_MATCH
         for (targetNode in target) {
-            for (candidateNode in candidate) {
-                if (targetNode.feature.difference(candidateNode.feature).isInfinite()) continue
-                val anchor = Anchor(targetNode, candidateNode)
-                val score = scoreForAnchor(target, candidate, anchor)
-                if (score > bestScore) {
-                    bestScore = score
-                    best = anchor
-                }
+            if (targetNode.feature.difference(anchorCandidateNode.feature).isInfinite()) continue
+            val score = scoreForAnchor(target, candidate, targetNode, anchorCandidateNode)
+            if (best == null || score > best.score) {
+                best = Anchor(targetNode, anchorCandidateNode, score)
             }
         }
         return best
     }
 
-    /** Every [candidate] node against its own best-matching [target] node once both sides are re-based to [anchor], averaged into one [0,1] score. */
+    /** Every [candidate] node against its own best-matching [target] node (via [findNodeNear]) once both sides are re-based to ([anchorTargetNode], [anchorCandidateNode]), averaged into one [0,1] score. */
     private fun scoreForAnchor(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
-        anchor: Anchor,
+        anchorTargetNode: GraphNode,
+        anchorCandidateNode: GraphNode,
     ): Float {
         var totalPositionError = 0f
         var totalFeatureDifference = 0f
 
         for (candidateNode in candidate) {
-            val candidateRelative = candidateNode.location.displacement(anchor.candidateNode.location)
-            var bestPositionError = Float.POSITIVE_INFINITY
-            var bestFeatureDifference = Float.POSITIVE_INFINITY
-
-            for (targetNode in target) {
-                val featureDifference = candidateNode.feature.difference(targetNode.feature)
-                if (featureDifference.isInfinite()) continue
-                val targetRelative = targetNode.location.displacement(anchor.targetNode.location)
-                val positionError = candidateRelative.displacement(targetRelative).magnitude()
-                if (positionError < bestPositionError) {
-                    bestPositionError = positionError
-                    bestFeatureDifference = featureDifference
-                }
-            }
-
-            if (bestPositionError.isInfinite()) return NO_MATCH
-            totalPositionError += bestPositionError
-            totalFeatureDifference += bestFeatureDifference
+            val candidateRelative = candidateNode.location.displacement(anchorCandidateNode.location)
+            val match =
+                findNodeNear(target, anchorTargetNode, candidateRelative, candidateNode.feature)
+                    ?: return NO_MATCH
+            totalPositionError += match.positionError
+            totalFeatureDifference += candidateNode.feature.difference(match.node.feature)
         }
 
         val n = candidate.size
@@ -146,20 +148,29 @@ object GraphMatcher {
         return (positionScore + featureScore) / 2f
     }
 
-    private fun bestMatchFor(
-        targetNode: GraphNode,
-        candidate: List<GraphNode>,
-        anchor: Anchor,
-    ): GraphNode {
-        val targetRelative = targetNode.location.displacement(anchor.targetNode.location)
-        return candidate.minBy { candidateNode ->
-            val featureDifference = targetNode.feature.difference(candidateNode.feature)
-            if (featureDifference.isInfinite()) {
-                Float.POSITIVE_INFINITY
-            } else {
-                val candidateRelative = candidateNode.location.displacement(anchor.candidateNode.location)
-                targetRelative.displacement(candidateRelative).magnitude()
+    /**
+     * The feature-compatible entry in [nodes] whose location — re-based to
+     * [nodesAnchor], the same way [relativeLocation] already is — sits
+     * closest to [relativeLocation]. A plain linear scan (see class doc for
+     * why that's the right call at this scale), tolerant of position error
+     * rather than requiring exact equality. Null if nothing in [nodes] is
+     * feature-compatible with [feature] at all.
+     */
+    private fun findNodeNear(
+        nodes: List<GraphNode>,
+        nodesAnchor: GraphNode,
+        relativeLocation: Location,
+        feature: Feature,
+    ): NearestMatch? {
+        var best: NearestMatch? = null
+        for (node in nodes) {
+            if (feature.difference(node.feature).isInfinite()) continue
+            val nodeRelative = node.location.displacement(nodesAnchor.location)
+            val positionError = relativeLocation.displacement(nodeRelative).magnitude()
+            if (best == null || positionError < best.positionError) {
+                best = NearestMatch(node, positionError)
             }
         }
+        return best
     }
 }

@@ -67,10 +67,7 @@ data class GraphObjectModel(
     val label: String,
     val nodes: List<GraphNode>,
     val edges: List<GraphEdge>,
-    var exemplarCount: Int,
-) {
-    fun find(feature: Feature) = nodes.filter { node -> node.feature == feature }
-}
+)
 
 /** Builds the sequential edge chain over [nodes] in the order they're given. */
 fun edgeChainOf(nodes: List<GraphNode>): List<GraphEdge> =

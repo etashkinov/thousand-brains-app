@@ -132,7 +132,7 @@ class EvidenceGraphLM(
     /** Labels the most recently completed drawing and folds it into memory. No-op before any stroke completes. */
     fun teach(label: String) {
         val nodes = lastCompletedNodes ?: return
-        memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes), exemplarCount = 1), label)
+        memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes)), label)
     }
 
     /** Labels within [xPercentThreshold]% of the max evidence — see the top-level [possibleMatches] this delegates to. */
