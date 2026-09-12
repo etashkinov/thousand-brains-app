@@ -54,7 +54,7 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * anywhere (it could never help a score anyway) rather than letting it
  * monopolize the anchor slot or inflate the candidate count past a smaller
  * taught model's own node count. An automated explorer starting from a
- * random, unknown location ([com.eta.tbp.lib.city.CityExperiment]) can't
+ * random, unknown location ([Experiment]) can't
  * guarantee its first observation is a discriminating one; this is what
  * lets a later, recognized observation still anchor the match instead of
  * an earlier unrecognized one permanently stalling it.
@@ -83,14 +83,14 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * TRAIN so every existing direct caller (a human teaching by drawing, or a
  * test that never touches [setExperimentMode]) keeps working unchanged;
  * only a caller that explicitly asks for EVALUATE (e.g.
- * [com.eta.tbp.lib.city.CityExperiment.evaluate]) gets the stricter
+ * [Experiment.evaluate]) gets the stricter
  * behavior.
  *
  * [suggestNextLocation] is this class's own embedded Goal State Generator
  * (mirrors real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s
  * doc): a third output channel alongside [getOutput]/[sendOutVote], not
  * folded into either, for whatever explores on this LM's behalf (e.g.
- * [com.eta.tbp.lib.city.CityExperiment]) to consult instead of choosing
+ * [Experiment]) to consult instead of choosing
  * blindly. Entirely a function of this LM's own state — [memory] and what
  * it's already observed/checked — never anything about the domain under
  * exploration itself, which is exactly what keeps it generic over any
@@ -111,8 +111,8 @@ class EvidenceGraphLM(
      * (`evidence_matching/learning_module.py`). A prior version of this
      * class took a [GraphMemory] as a constructor parameter, built by
      * whatever wired the LM up; that only existed to work around
-     * [com.eta.tbp.lib.city.CityExperiment] rebuilding its LM on every
-     * episode, and let a caller reach in and share one mutable [GraphMemory]
+     * [Experiment] (then city-specific, `CityExperiment`) rebuilding its LM
+     * on every episode, and let a caller reach in and share one mutable [GraphMemory]
      * across separate LM instances — [state]/[loadState] (already the
      * `LearningModule` contract's own checkpoint mechanism, matching
      * Monty's `state_dict` save/restore) is the correct way to move taught

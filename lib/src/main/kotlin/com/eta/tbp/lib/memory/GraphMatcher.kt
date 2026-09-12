@@ -13,8 +13,8 @@ package com.eta.tbp.lib.memory
  * (stored node, candidate node) pair.
  *
  * That's safe even for an automated random-order explorer
- * ([com.eta.tbp.lib.city.CityExperiment]) that can't guarantee its first
- * observation is one the true matching city shares, because [scoreForAnchor]
+ * ([com.eta.tbp.lib.lm.Experiment]) that can't guarantee its first
+ * observation is one the true matching object shares, because [scoreForAnchor]
  * is a hard veto per node: if *any* buffered node's feature has zero
  * feature-compatible counterpart anywhere in a stored model, that model
  * scores zero no matter which node was chosen as the anchor — the anchor

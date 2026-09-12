@@ -20,7 +20,7 @@ import com.eta.tbp.lib.memory.Location
  * carries no identity-defining information, so it's a "nothing new this
  * step" observation the same way [SensorModule]'s own contract already
  * models one — never a real graph node. This matters for an automated
- * search over a whole grid ([com.eta.tbp.lib.city.CityExperiment]): most cells in a real city
+ * search over a whole grid ([com.eta.tbp.lib.lm.Experiment]): most cells in a real city
  * are empty, and without this, an empty cell landing anywhere in the
  * observed sequence would force every taught city to score zero (nothing
  * taught has an "empty" node either), not just fail to help.

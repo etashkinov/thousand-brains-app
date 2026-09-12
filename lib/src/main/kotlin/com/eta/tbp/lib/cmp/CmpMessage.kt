@@ -12,7 +12,7 @@ enum class SenderType { SM, LM }
  * [location]/[feature] carry whatever payload the producer's domain needs —
  * a stroke's [com.eta.tbp.lib.sensor.FloatLocation]/
  * [com.eta.tbp.lib.sensor.PrimitiveFeature] or a city's
- * [com.eta.tbp.lib.city.MapLocation]/[com.eta.tbp.lib.sensor.LabelFeature] — via
+ * [com.eta.tbp.lib.sensor.LabelFeature] — via
  * the generic [Location]/[Feature] interfaces, rather than this class
  * knowing about pose vectors or any other domain-specific shape directly.
  */
