@@ -53,7 +53,7 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * anywhere (it could never help a score anyway) rather than letting it
  * monopolize the anchor slot or inflate the candidate count past a smaller
  * taught model's own node count. An automated explorer starting from a
- * random, unknown location ([com.eta.tbp.lib.city.CityAutoExplorer]) can't
+ * random, unknown location ([com.eta.tbp.lib.city.CityExperiment]) can't
  * guarantee its first observation is a discriminating one; this is what
  * lets a later, recognized observation still anchor the match instead of
  * an earlier unrecognized one permanently stalling it.
@@ -73,13 +73,23 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * Monty's own framework gets ground-truth labels from a labeled dataset,
  * but this app's v1 design is a human teaching by drawing + labeling, so
  * [teach] is this app's honest equivalent of that ground truth, not a
- * deviation from the port.
+ * deviation from the port. It's still gated on [ExperimentMode] exactly the
+ * way real Monty's own learning is: `GraphLM.update_ltm_from_stm()`
+ * (`evidence_matching/learning_module.py`) only calls `_update_memory()`
+ * `if self.mode is ExperimentMode.TRAIN` — an EVALUATE-mode episode that
+ * ends in no match writes nothing to memory, full stop, rather than
+ * inventing a label for whatever wasn't recognized. [mode] defaults to
+ * TRAIN so every existing direct caller (a human teaching by drawing, or a
+ * test that never touches [setExperimentMode]) keeps working unchanged;
+ * only a caller that explicitly asks for EVALUATE (e.g.
+ * [com.eta.tbp.lib.city.CityExperiment.evaluate]) gets the stricter
+ * behavior.
  *
  * [suggestNextLocation] is this class's own embedded Goal State Generator
  * (mirrors real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s
  * doc): a third output channel alongside [getOutput]/[sendOutVote], not
  * folded into either, for whatever explores on this LM's behalf (e.g.
- * [com.eta.tbp.lib.city.CityAutoExplorer]) to consult instead of choosing
+ * [com.eta.tbp.lib.city.CityExperiment]) to consult instead of choosing
  * blindly. Entirely a function of this LM's own state — [memory] and what
  * it's already observed/checked — never anything about the domain under
  * exploration itself, which is exactly what keeps it generic over any
@@ -92,6 +102,7 @@ class EvidenceGraphLM(
     private val nodeBuffer = mutableListOf<GraphNode>()
     private val checkedLocations = mutableSetOf<Location>()
     private var lastCompletedNodes: List<GraphNode>? = null
+    private var mode = ExperimentMode.TRAIN
 
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
@@ -194,15 +205,16 @@ class EvidenceGraphLM(
     }
 
     override fun setExperimentMode(mode: ExperimentMode) {
-        // No behavioral difference yet: v1 has no training-only bookkeeping.
+        this.mode = mode
     }
 
     override fun state(): Map<String, List<GraphObjectModel>> = memory.snapshot()
 
     override fun loadState(state: Map<String, List<GraphObjectModel>>) = memory.restore(state)
 
-    /** Labels the most recently completed drawing and folds it into memory. No-op before any stroke completes. */
+    /** Labels the most recently completed drawing and folds it into memory. No-op before any stroke completes, or outside [ExperimentMode.TRAIN] — see class doc. */
     fun teach(label: String) {
+        if (mode != ExperimentMode.TRAIN) return
         val nodes = lastCompletedNodes ?: return
         memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes)), label)
     }

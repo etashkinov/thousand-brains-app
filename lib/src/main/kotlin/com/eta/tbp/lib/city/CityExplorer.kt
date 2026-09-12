@@ -55,7 +55,7 @@ class CityExplorer(
     /**
      * A live look at the recognition state so far this exploration —
      * unlike [endExploration], this doesn't end the episode, so
-     * [CityAutoExplorer] can check it after every single [visit] and keep
+     * [CityExperiment] can check it after every single [visit] and keep
      * exploring on anything other than a unique [RecognitionResult.Recognized].
      */
     fun currentResult(): RecognitionResult = lm.recognitionResult()
@@ -69,7 +69,7 @@ class CityExplorer(
      * cast is safe: every [com.eta.tbp.lib.memory.Location] [lm] has ever
      * been given by [sensorModule] is a [MapLocation], so anything it
      * predicts back is one too. Null under the same conditions
-     * [EvidenceGraphLM.suggestNextLocation] is — [CityAutoExplorer] falls
+     * [EvidenceGraphLM.suggestNextLocation] is — [CityExperiment] falls
      * back to its own random pick in that case.
      */
     fun suggestNextLocation(): MapLocation? = lm.suggestNextLocation() as? MapLocation

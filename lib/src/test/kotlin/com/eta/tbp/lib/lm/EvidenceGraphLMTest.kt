@@ -232,6 +232,22 @@ class EvidenceGraphLMTest {
     }
 
     @Test
+    fun `teach is a no-op in EVALUATE mode but works again once switched back to TRAIN`() {
+        val memory = GraphMemory()
+        val evidenceGraphLM = newLm(memory = memory)
+
+        evidenceGraphLM.setExperimentMode(ExperimentMode.EVALUATE)
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
+        assertEquals(emptySet<String>(), memory.allLabels())
+
+        evidenceGraphLM.setExperimentMode(ExperimentMode.TRAIN)
+        drive(evidenceGraphLM, lineShape())
+        evidenceGraphLM.teach("line")
+        assertEquals(setOf("line"), memory.allLabels())
+    }
+
+    @Test
     fun `state captures taught labels and loadState restores them into a fresh instance`() {
         val memory = GraphMemory()
         val evidenceGraphLM = newLm(memory = memory)

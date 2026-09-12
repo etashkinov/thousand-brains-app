@@ -15,7 +15,7 @@ import org.junit.Test
  * [suggestGoalLocation] is domain-agnostic — proved here with the same
  * continuous, non-city [FloatLocation]/[PrimitiveFeature] fixtures the rest
  * of the generic kernel tests use, not [com.eta.tbp.lib.city.MapLocation].
- * [com.eta.tbp.lib.city.CityAutoExplorer] covers the city-flavored
+ * [com.eta.tbp.lib.city.CityExperiment] covers the city-flavored
  * end-to-end scenario separately.
  */
 class GoalGeneratorTest {

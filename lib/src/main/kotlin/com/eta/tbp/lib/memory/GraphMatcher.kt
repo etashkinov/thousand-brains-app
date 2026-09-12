@@ -13,7 +13,7 @@ package com.eta.tbp.lib.memory
  * (stored node, candidate node) pair.
  *
  * That's safe even for an automated random-order explorer
- * ([com.eta.tbp.lib.city.CityAutoExplorer]) that can't guarantee its first
+ * ([com.eta.tbp.lib.city.CityExperiment]) that can't guarantee its first
  * observation is one the true matching city shares, because [scoreForAnchor]
  * is a hard veto per node: if *any* buffered node's feature has zero
  * feature-compatible counterpart anywhere in a stored model, that model
@@ -104,7 +104,7 @@ object GraphMatcher {
      * Every node in [stored], translated into [observed]'s own frame of
      * reference via the best anchor pairing between the two — including
      * [stored] nodes that have no counterpart in [observed] yet, i.e. cells
-     * not visited this episode. [com.eta.tbp.lib.city.CityGoalGenerator]
+     * not visited this episode. [com.eta.tbp.lib.lm.suggestGoalLocation]
      * uses this to predict where a leading hypothesis's still-unseen
      * landmarks should be, mirroring real Monty's own `EvidenceGoalGenerator`
      * projecting a hypothesis graph into the current sensed frame to find a
