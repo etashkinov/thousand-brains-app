@@ -5,6 +5,7 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,7 +17,7 @@ import kotlin.random.Random
  * moves cell to cell (not necessarily adjacent) in an unfamiliar city,
  * comparing what they observe against every previously taught city, until
  * either a unique match or a confident no-match emerges. Every piece here —
- * [Explorer], [CitySensorModule], [MapFeature], [CityMap] — is a thin domain
+ * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.sensor.LabelFeature], [CityMap] — is a thin domain
  * plug-in; the actual matching/evidence logic is exactly
  * [com.eta.tbp.lib.memory.GraphMatcher]/[com.eta.tbp.lib.memory.GraphMemory]/
  * [EvidenceGraphLM], unmodified from what the digit-stroke tier uses.
@@ -33,7 +34,7 @@ class CityExplorerTest {
         cityMap: CityMap,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Explorer {
-        val sensor = CitySensorModule(sensorId = "city-sensor", cityMap = cityMap)
+        val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap)
         val lm = EvidenceGraphLM(lmId = "city-lm")
         return Explorer(sensor, lm).apply { loadState(seedState) }
     }

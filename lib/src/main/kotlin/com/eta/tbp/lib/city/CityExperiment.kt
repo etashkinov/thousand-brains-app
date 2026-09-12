@@ -7,7 +7,8 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
-import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.Environment
+import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import kotlin.random.Random
 
 /**
@@ -47,15 +48,15 @@ import kotlin.random.Random
  * an existing city or a newly taught one, never a bare miss.
  *
  * Every cell in the grid is a *candidate* to visit, not just landmarks: a
- * real explorer doesn't know in advance which cells hold a [MapFeature]
+ * real explorer doesn't know in advance which cells hold a [com.eta.tbp.lib.sensor.LabelFeature]
  * worth recording — that's discovered by visiting, exactly like
- * [CitySensorModule] mirrors a real Monty `SensorModule`'s per-observation
+ * [com.eta.tbp.lib.sensor.EnvironmentSensorModule] mirrors a real Monty `SensorModule`'s per-observation
  * reporting. Touring stays cheap regardless of how much of the grid ends
- * up visited, since [CitySensorModule] reports an empty cell as
+ * up visited, since [com.eta.tbp.lib.sensor.EnvironmentSensorModule] reports an empty cell as
  * `passMessage = false` — one lookup, never touching the LM's evidence.
  *
  * [logger] defaults to [Logger.None] (silent) and, when set, is handed down
- * to every [CitySensorModule]/[EvidenceGraphLM]/[Explorer] this class wires
+ * to every [com.eta.tbp.lib.sensor.EnvironmentSensorModule]/[EvidenceGraphLM]/[Explorer] this class wires
  * up — one [Logger] for the whole pipeline, each layer tagging its own
  * events.
  *
@@ -79,12 +80,11 @@ import kotlin.random.Random
  * checkpoint-restore idiom real Monty uses to load a pretrained model.
  */
 class CityExperiment(
-    private val cityMap: CityMap,
+    private val environment: Environment,
     private val lmId: String = "city-lm",
-    private val random: Random = Random.Default,
     private val logger: Logger = Logger.Console,
 ) {
-    private val sensor = CitySensorModule(sensorId = "$lmId-sensor", cityMap = cityMap, logger = logger)
+    private val sensor = EnvironmentSensorModule(sensorId = "$lmId-sensor", environment = environment, logger = logger)
     private val lm = EvidenceGraphLM(lmId = lmId, logger = logger)
     private val explorer = Explorer(sensor, lm, logger = logger)
 
@@ -110,7 +110,7 @@ class CityExperiment(
 
     /** Explores [cityMap] and, if nothing already taught uniquely matches, teaches [label] as a new city — real Monty's TRAIN behavior (a known ground-truth label, supplied by the caller the same way a labeled dataset entry supplies one). */
     fun train(label: String): Outcome {
-        logger.info(TAG) { "train('$label') starting on a ${cityMap.size}x${cityMap.size} grid" }
+        logger.info(TAG) { "train('$label') starting on $environment" }
         val exploration = runEpisode(ExperimentMode.TRAIN)
         val result = exploration.result
         val outcome =
@@ -126,7 +126,7 @@ class CityExperiment(
 
     /** Explores [cityMap] purely to check it against what's already known — never writes to [lm]'s memory, matching real Monty's EVALUATE behavior. */
     fun evaluate(): Outcome {
-        logger.info(TAG) { "evaluate() starting on a ${cityMap.size}x${cityMap.size} grid" }
+        logger.info(TAG) { "evaluate() starting on $environment" }
         val exploration = runEpisode(ExperimentMode.EVALUATE)
         val result = exploration.result
         val outcome =
@@ -148,11 +148,8 @@ class CityExperiment(
     /** Runs [explorer]'s motor system ([Explorer.explore]), bounded to [cityMap]'s own grid — only [mode] differs between [train]/[evaluate]. */
     private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
         lm.setExperimentMode(mode)
-        return explorer.explore(randomLocation = ::randomCell, maxSteps = cityMap.size * cityMap.size)
+        return explorer.explore(randomLocation = environment::randomLocation, maxSteps = (environment.size * environment.size).toInt())
     }
-
-    /** A uniformly random cell in [cityMap]'s NxN grid — [Explorer.explore]'s only source of "where to look next" when [Explorer.suggestNextLocation] has nothing to offer. */
-    private fun randomCell() = FloatLocation(random.nextInt(cityMap.size).toFloat(), random.nextInt(cityMap.size).toFloat())
 
     private companion object {
         const val TAG = "CityExperiment"

@@ -1,14 +1,14 @@
-package com.eta.tbp.lib.city
+package com.eta.tbp.lib.sensor
 
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.log.Logger
+import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.sensor.SensorModule
 
 /**
  * The [SensorModule] implementation for the city domain: given the cell the
- * explorer just moved to, reports that cell's [MapFeature] straight from
+ * explorer just moved to, reports that cell's [LabelFeature] straight from
  * [cityMap]. No segmentation step is needed the way
  * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] needs one for a continuous
  * touch stroke — a city move already arrives as one discrete, already-
@@ -16,27 +16,27 @@ import com.eta.tbp.lib.sensor.SensorModule
  * per-domain (e.g. a depth-camera SM needing multi-point surface fitting
  * vs. one that reads a single resolved value straight off its sensor).
  *
- * [MapFeature.EMPTY] cells report `passMessage = false`: an empty cell
+ * [LabelFeature.Companion.EMPTY] cells report `passMessage = false`: an empty cell
  * carries no identity-defining information, so it's a "nothing new this
  * step" observation the same way [SensorModule]'s own contract already
  * models one — never a real graph node. This matters for an automated
- * search over a whole grid ([CityExperiment]): most cells in a real city
+ * search over a whole grid ([com.eta.tbp.lib.city.CityExperiment]): most cells in a real city
  * are empty, and without this, an empty cell landing anywhere in the
  * observed sequence would force every taught city to score zero (nothing
  * taught has an "empty" node either), not just fail to help.
  *
- * [logger] defaults to [Logger.Console] (silent), same as every other class in
+ * [logger] defaults to [com.eta.tbp.lib.log.Logger.Console] (silent), same as every other class in
  * this pipeline
  */
-class CitySensorModule(
+class EnvironmentSensorModule(
     override val sensorId: String,
-    private val cityMap: CityMap,
+    private val environment: Environment,
     private val logger: Logger = Logger.Console,
 ) : SensorModule {
     override fun step(observation: Location): CmpMessage {
-        val feature = cityMap.featureAt(observation)
-        val passMessage = feature != MapFeature.EMPTY
-        logger.debug(TAG) { "[$sensorId] $observation -> '${feature.label}' (passMessage=$passMessage)" }
+        val feature = environment.featureAt(observation)
+        val passMessage = feature != null
+        logger.debug(TAG) { "[$sensorId] $observation -> '${feature?.label}' (passMessage=$passMessage)" }
         return CmpMessage(
             location = observation,
             feature = feature,
@@ -53,6 +53,6 @@ class CitySensorModule(
     override fun postEpisode() = Unit
 
     private companion object {
-        const val TAG = "CitySensorModule"
+        const val TAG = "EnvironmentSensorModule"
     }
 }

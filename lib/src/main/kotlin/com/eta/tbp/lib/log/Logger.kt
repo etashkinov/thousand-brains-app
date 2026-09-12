@@ -16,7 +16,7 @@ package com.eta.tbp.lib.log
  * an Android-backed implementation can forward a call here with no
  * adapting — and it's what lets [CityExperiment][com.eta.tbp.lib.city.CityExperiment]
  * share a single [Logger] across every layer it wires up
- * ([com.eta.tbp.lib.city.CitySensorModule], [com.eta.tbp.lib.lm.EvidenceGraphLM],
+ * ([com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.lm.EvidenceGraphLM],
  * [com.eta.tbp.lib.lm.Explorer]) while each still logs under its own name.
  * [message] is a lambda so a discarded level (see [None]) never even builds
  * the string.
