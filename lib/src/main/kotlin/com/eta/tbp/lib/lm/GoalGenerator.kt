@@ -7,7 +7,7 @@ import com.eta.tbp.lib.memory.Location
 
 /**
  * Mirrors real Monty's Goal State Generator (see `EvidenceGoalGenerator` in
- * `evidence_matching/learning_module.py`): once evidence narrows to a small
+ * `goal_generation.py`): once evidence narrows to a small
  * set of tied hypotheses, it proposes *where* to look next to best tell
  * them apart, rather than a caller having to wander randomly. Real Monty
  * computes this as the point of maximum disagreement between the top-2

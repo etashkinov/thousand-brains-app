@@ -20,7 +20,7 @@ import com.eta.tbp.lib.memory.Location
  * it carries no identity-defining information, so it's a "nothing new this
  * step" observation the same way [SensorModule]'s own contract already
  * models one — never a real graph node. This matters for an automated
- * search over a whole environment ([com.eta.tbp.lib.lm.Experiment]): most
+ * search over a whole environment ([com.eta.tbp.lib.experiment.Experiment]): most
  * locations are typically featureless, and without this, one landing
  * anywhere in the observed sequence would force every taught object to
  * score zero (nothing taught has an "empty" node either), not just fail to

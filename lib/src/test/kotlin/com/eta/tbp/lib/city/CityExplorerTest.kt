@@ -26,7 +26,7 @@ import kotlin.random.Random
  * [CityExperimentTest] rather than each file keeping its own copy.
  *
  * [randomAmong] samples only [GridEnvironment.cells] (the taught landmarks) rather
- * than [com.eta.tbp.lib.lm.Experiment]'s own whole-grid [Explorer.explore]
+ * than [com.eta.tbp.lib.experiment.Experiment]'s own whole-grid [Explorer.explore]
  * policy — this file exercises [Explorer]/[EvidenceGraphLM] wiring, not a
  * realistic blind grid tour, which [CityExperimentTest] already covers.
  */
@@ -49,7 +49,7 @@ class CityExplorerTest {
     /**
      * Teaches every landmark [cityMap] defines as [label] — visits them all
      * regardless of an early [RecognitionResult.Recognized] against
-     * something already taught (unlike [com.eta.tbp.lib.lm.Experiment], which
+     * something already taught (unlike [com.eta.tbp.lib.experiment.Experiment], which
      * stops as soon as it's confident), the way a second city sharing landmarks with
      * an already-known one has to be taught so its own distinguishing cell
      * is guaranteed to be observed.

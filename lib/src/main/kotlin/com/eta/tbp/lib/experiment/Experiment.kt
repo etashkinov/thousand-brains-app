@@ -1,11 +1,25 @@
-package com.eta.tbp.lib.lm
+package com.eta.tbp.lib.experiment
 
+import com.eta.tbp.lib.lm.EvidenceGraphLM
+import com.eta.tbp.lib.lm.ExperimentMode
+import com.eta.tbp.lib.lm.ExplorationOutcome
+import com.eta.tbp.lib.lm.Explorer
+import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.sensor.Environment
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 
 /**
+ * Mirrors real Monty's `MontyExperiment` — the harness that drives a
+ * `Monty`/`MontyBase` object through episodes, kept in its own package
+ * (`frameworks/experiments/`) separate from the "brain" itself
+ * (`frameworks/models/`, where `Monty`/`MontyBase`/`LearningModule`/
+ * `SensorModule` live). [Explorer] is this app's `models`-layer
+ * counterpart — this class is the `experiments`-layer one, wiring
+ * [sensor]/[lm]/[explorer] together and running [train]/[evaluate], the
+ * same layering split, not one flat package for both.
+ *
  * Automates the "explore until recognized" loop end to end, per TBP's own
  * framing: an explorer who finds themselves in [environment] doesn't know
  * their own coordinate on arrival, so each episode starts by visiting

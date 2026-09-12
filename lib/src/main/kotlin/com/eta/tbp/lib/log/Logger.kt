@@ -14,7 +14,7 @@ package com.eta.tbp.lib.log
  * [tag] is passed per call rather than bound to one [Logger] instance,
  * deliberately mirroring `android.util.Log.d(tag, message)`'s own shape —
  * an Android-backed implementation can forward a call here with no
- * adapting — and it's what lets [Experiment][com.eta.tbp.lib.lm.Experiment]
+ * adapting — and it's what lets [Experiment][com.eta.tbp.lib.experiment.Experiment]
  * share a single [Logger] across every layer it wires up
  * ([com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.lm.EvidenceGraphLM],
  * [com.eta.tbp.lib.lm.Explorer]) while each still logs under its own name.
