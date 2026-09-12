@@ -32,7 +32,7 @@ class CityExperimentTest {
                 EvidenceGraphLM(lmId = "teach-lm"),
             ).apply { loadState(priorState) }
 
-        explorer.explore(cityMap.cells.keys, true)
+        explorer.explore({ cityMap.cells.keys.random() }, maxSteps = cityMap.cells.size, everything = true)
 
         explorer.teach(label)
         return explorer.state()

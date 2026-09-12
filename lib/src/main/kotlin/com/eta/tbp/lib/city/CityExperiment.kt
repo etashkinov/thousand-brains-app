@@ -7,7 +7,6 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
-import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.FloatLocation
 import kotlin.random.Random
 
@@ -32,7 +31,11 @@ import kotlin.random.Random
  *
  * This whole loop — [Explorer]'s motor system, see its own class doc — is
  * generic and lives in [Explorer.explore]; [runEpisode] here only supplies
- * this domain's own candidate set ([allCells]).
+ * this domain's own random-cell sampler ([randomCell]) and grid-sized step
+ * cap. [Explorer] never sees the grid itself, only a way to ask for one
+ * more random cell — the same separation real Monty keeps between an SM
+ * (never told the full observation space) and the environment/dataset that
+ * actually knows it.
  *
  * [train] and [evaluate] mirror `MontyExperiment.train()`/`.evaluate()`, not
  * one method with a mode flag: they diverge in exactly one place, whether
@@ -142,14 +145,14 @@ class CityExperiment(
     /** Loads previously taught cities (from [state]) into [lm]. */
     fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
 
-    /** Runs [explorer]'s motor system ([Explorer.explore]) over every grid cell — only [mode] differs between [train]/[evaluate]. */
+    /** Runs [explorer]'s motor system ([Explorer.explore]), bounded to [cityMap]'s own grid — only [mode] differs between [train]/[evaluate]. */
     private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
         lm.setExperimentMode(mode)
-        return explorer.explore(allCells(), random = random)
+        return explorer.explore(randomLocation = ::randomCell, maxSteps = cityMap.size * cityMap.size)
     }
 
-    private fun allCells(): List<Location> =
-        (0 until cityMap.size).flatMap { x -> (0 until cityMap.size).map { y -> FloatLocation(x.toFloat(), y.toFloat()) } }
+    /** A uniformly random cell in [cityMap]'s NxN grid — [Explorer.explore]'s only source of "where to look next" when [Explorer.suggestNextLocation] has nothing to offer. */
+    private fun randomCell() = FloatLocation(random.nextInt(cityMap.size).toFloat(), random.nextInt(cityMap.size).toFloat())
 
     private companion object {
         const val TAG = "CityExperiment"

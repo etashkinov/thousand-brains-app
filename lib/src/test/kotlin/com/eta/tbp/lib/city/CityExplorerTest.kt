@@ -4,6 +4,7 @@ import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.FloatLocation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,6 +22,11 @@ import kotlin.random.Random
  * [EvidenceGraphLM], unmodified from what the digit-stroke tier uses.
  * [springfield]/[shelbyville]/[capitalCity] (`Cities.kt`) are shared with
  * [CityExperimentTest] rather than each file keeping its own copy.
+ *
+ * [randomAmong] samples only [CityMap.cells] (the taught landmarks) rather
+ * than [CityExperiment]'s own whole-grid [Explorer.explore] policy — this
+ * file exercises [Explorer]/[EvidenceGraphLM] wiring, not a realistic
+ * blind grid tour, which [CityExperimentTest] already covers.
  */
 class CityExplorerTest {
     private fun newExplorer(
@@ -31,6 +37,12 @@ class CityExplorerTest {
         val lm = EvidenceGraphLM(lmId = "city-lm")
         return Explorer(sensor, lm).apply { loadState(seedState) }
     }
+
+    /** A `() -> Location` that samples uniformly among [cityMap]'s own landmark cells — [Explorer.explore]'s only source of "where to look next" absent a goal suggestion. */
+    private fun randomAmong(
+        cityMap: CityMap,
+        random: Random,
+    ): () -> Location = { cityMap.cells.keys.random(random) }
 
     /**
      * Teaches every landmark [cityMap] defines as [label] — visits them all
@@ -46,7 +58,7 @@ class CityExplorerTest {
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Map<String, List<GraphObjectModel>> {
         val explorer = newExplorer(cityMap, seedState)
-        explorer.explore(cityMap.cells.keys, everything = true)
+        explorer.explore(randomAmong(cityMap, Random(0)), maxSteps = cityMap.cells.size, everything = true)
         explorer.teach(label)
         return explorer.state()
     }
@@ -54,7 +66,7 @@ class CityExplorerTest {
     @Test
     fun `exploring before anything is taught reports Unknown`() {
         val cityMap = springfield(origin = FloatLocation(1f, 1f))
-        val result = newExplorer(cityMap).explore(cityMap.cells.keys, random = Random(1)).result
+        val result = newExplorer(cityMap).explore(randomAmong(cityMap, Random(1)), maxSteps = cityMap.cells.size).result
         assertEquals(RecognitionResult.Unknown, result)
     }
 
@@ -66,7 +78,10 @@ class CityExplorerTest {
         // no way to know their true coordinate in the taught map) and visits
         // the landmarks in a different order (a different random seed).
         val cityMap = springfield(origin = FloatLocation(4f, 5f))
-        val result = newExplorer(cityMap, afterTeaching).explore(cityMap.cells.keys, random = Random(2)).result
+        val result =
+            newExplorer(cityMap, afterTeaching)
+                .explore(randomAmong(cityMap, Random(2)), maxSteps = cityMap.cells.size)
+                .result
 
         assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
         assertEquals("Springfield", (result as RecognitionResult.Recognized).label)
@@ -78,7 +93,7 @@ class CityExplorerTest {
 
         val cityMap = capitalCity(origin = FloatLocation(2f, 4f))
         val capitalCityExplorer = newExplorer(cityMap, afterSpringfield)
-        val unknownResult = capitalCityExplorer.explore(cityMap.cells.keys, random = Random(3)).result
+        val unknownResult = capitalCityExplorer.explore(randomAmong(cityMap, Random(3)), maxSteps = cityMap.cells.size).result
         assertEquals(RecognitionResult.Unknown, unknownResult)
 
         capitalCityExplorer.teach("Capital City")
@@ -93,7 +108,7 @@ class CityExplorerTest {
         // Springfield's own layout again, elsewhere in the grid: shares post office + park with Shelbyville,
         // but only Springfield's bakery position matches once that cell is reached.
         val cityMap = springfield(origin = FloatLocation(6f, 1f))
-        val outcome = newExplorer(cityMap, afterBoth).explore(cityMap.cells.keys, random = Random(4))
+        val outcome = newExplorer(cityMap, afterBoth).explore(randomAmong(cityMap, Random(4)), maxSteps = cityMap.cells.size)
 
         assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
         assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)

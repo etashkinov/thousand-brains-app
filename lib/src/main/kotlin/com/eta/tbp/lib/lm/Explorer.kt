@@ -5,7 +5,6 @@ import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.SensorModule
-import kotlin.random.Random
 
 /**
  * Mirrors real Monty's `Monty`/`MontyBase` object: owns exactly one
@@ -40,13 +39,17 @@ import kotlin.random.Random
  *
  * [explore] additionally owns the *motor system* role real Monty's `Monty`
  * constructor takes a `motor_system` for: deciding, at each step, where to
- * go next. Real Monty's own `MotorSystem`/`MotorPolicySelector` machinery
- * (`motor_system.py`) is built for continuous 3D agent motion — far more
- * than this domain's action space needs (choosing among a finite,
- * caller-supplied set of [Location] candidates) — so [explore] ports the
- * *behavior* (prefer [suggestNextLocation]'s goal-directed pick; otherwise
- * fall back to the next not-yet-tried candidate) without porting that
- * machinery. That's a deliberate, stated exception, the same category
+ * go next. Real Monty's own `NaiveScanPolicy` never receives (and the
+ * [SensorModule] interface never exposes) "everywhere the sensor could go"
+ * — it applies a small fixed relative step, over and over, capped by a step
+ * count (`check_reached_max_matching_steps`), and defers to a goal state
+ * once the LM has one to offer. [explore] mirrors that shape rather than
+ * real Monty's actual `MotorSystem`/`MotorPolicySelector` machinery
+ * (`motor_system.py`, built for continuous 3D agent motion — far more than
+ * this domain needs): prefer [suggestNextLocation]'s goal-directed pick;
+ * otherwise ask [randomLocation] for a candidate, retrying if it's one
+ * [visit] already used this episode; stop after [maxSteps] regardless.
+ * That's a deliberate, stated exception, the same category
  * IMPLEMENTATION_PLAN.md's own compatibility table already makes for the
  * touch tier ("Motor system + simulator driving a sensor" → "Not
  * ported — the human *is* the motor system"); here nothing plays that role
@@ -114,30 +117,36 @@ class Explorer(
     fun suggestNextLocation(): Location? = lm.suggestNextLocation()
 
     /**
-     * Runs one full episode over [candidates] (visited in [random]-shuffled
-     * order) — the motor system this class owns (see class doc): at each
-     * step, prefer [suggestNextLocation]'s goal-directed pick over the next
-     * untried candidate, stopping as soon as [RecognitionResult.Recognized]
-     * or once every candidate's been tried. Set [everything] to keep going
-     * even past an early [RecognitionResult.Recognized] — teaching a second
-     * object that shares landmarks with an already-taught one needs every
-     * candidate observed, not just however many it took to (mis)match the
-     * first thing already known (see [EvidenceGraphLM.teach]'s own doc for
-     * why teaching needs the complete sequence).
+     * Runs one full episode, for at most [maxSteps] visits — the motor
+     * system this class owns (see class doc). At each step: prefer
+     * [suggestNextLocation]'s goal-directed pick; if it's null or already
+     * visited this episode, ask [randomLocation] instead, retrying it for
+     * as long as it keeps returning an already-visited location. Stops
+     * early on [RecognitionResult.Recognized] unless [everything] is set —
+     * teaching a second object that shares landmarks with an already-taught
+     * one needs every candidate observed, not just however many it took to
+     * (mis)match the first thing already known (see [EvidenceGraphLM.teach]'s
+     * own doc for why teaching needs the complete sequence).
+     *
+     * [randomLocation] must not be able to produce more than [maxSteps]
+     * distinct locations — once every location it can produce has been
+     * visited, the already-visited retry never terminates. A caller whose
+     * domain is a bounded space (e.g. a city's NxN grid) should size
+     * [maxSteps] to that space's own extent, the same way real Monty's
+     * `NaiveScanPolicy` is bounded by a caller-configured step count, not by
+     * anything it discovers about the environment itself.
      */
     fun explore(
-        candidates: Collection<Location>,
+        randomLocation: () -> Location,
+        maxSteps: Int,
         everything: Boolean = false,
-        random: Random = Random.Default,
     ): ExplorationOutcome {
-        val remaining = candidates.shuffled(random).toMutableList()
-
         beginExploration()
         var locationsVisited = 0
-        while (remaining.isNotEmpty()) {
-            val suggestion = suggestNextLocation()?.takeIf { it in remaining }
-            val next = suggestion ?: remaining.first()
-            remaining.remove(next)
+        while (locationsVisited < maxSteps) {
+            val visited = currentNodes().map { it.location }.toSet()
+            val suggestion = suggestNextLocation()?.takeIf { it !in visited }
+            val next = suggestion ?: generateSequence(randomLocation).first { it !in visited }
 
             logger.debug(TAG) { "step ${locationsVisited + 1}: visiting $next (${if (suggestion != null) "goal-suggested" else "random"})" }
             visit(next)
@@ -155,7 +164,7 @@ class Explorer(
     }
 }
 
-/** [Explorer.explore]'s result: what it concluded, and how many candidates it took to get there. */
+/** [Explorer.explore]'s result: what it concluded, and how many locations it took to get there. */
 data class ExplorationOutcome(
     val result: RecognitionResult,
     val locationsVisited: Int,
