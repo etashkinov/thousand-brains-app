@@ -3,6 +3,7 @@ package com.eta.tbp.lib.city
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.ExperimentMode
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphMemory
 import kotlin.random.Random
 
@@ -41,12 +42,18 @@ import kotlin.random.Random
  * reporting. Touring stays cheap regardless of how much of the grid ends
  * up visited, since [CitySensorModule] reports an empty cell as
  * `passMessage = false` — one lookup, never touching the LM's evidence.
+ *
+ * [logger] defaults to [Logger.None] (silent) and, when set, is handed down
+ * to every [CitySensorModule]/[EvidenceGraphLM]/[CityExplorer] this class
+ * wires up per episode — one [Logger] for the whole pipeline, each layer
+ * tagging its own events.
  */
 class CityExperiment(
     private val cityMap: CityMap,
     private val memory: GraphMemory,
     private val lmId: String = "city-lm",
     private val random: Random = Random.Default,
+    private val logger: Logger = Logger.Console,
 ) {
     sealed class Outcome {
         /** [cellsVisited] is how many cells it took before the match became unique — never more than the grid's own cell count. */
@@ -70,37 +77,50 @@ class CityExperiment(
 
     /** Explores [cityMap] and, if nothing already in [memory] uniquely matches, teaches [label] as a new city — real Monty's TRAIN behavior (a known ground-truth label, supplied by the caller the same way a labeled dataset entry supplies one). */
     fun train(label: String): Outcome {
+        logger.info(TAG) { "train('$label') starting on a ${cityMap.size}x${cityMap.size} grid" }
         val (explorer, cellsVisited) = runEpisode(ExperimentMode.TRAIN)
         val result = explorer.currentResult()
-        if (result is RecognitionResult.Recognized) return Outcome.Recognized(result.label, result.confidence, cellsVisited)
-        explorer.teach(label) // Belt-and-suspenders: the real gate is EvidenceGraphLM's own ExperimentMode check.
-        return Outcome.Taught(label, cellsVisited)
+        val outcome =
+            if (result is RecognitionResult.Recognized) {
+                Outcome.Recognized(result.label, result.confidence, cellsVisited)
+            } else {
+                explorer.teach(label) // Belt-and-suspenders: the real gate is EvidenceGraphLM's own ExperimentMode check.
+                Outcome.Taught(label, cellsVisited)
+            }
+        logger.info(TAG) { "train('$label') finished: $outcome" }
+        return outcome
     }
 
     /** Explores [cityMap] purely to check it against what's already known — never writes to [memory], matching real Monty's EVALUATE behavior. */
     fun evaluate(): Outcome {
+        logger.info(TAG) { "evaluate() starting on a ${cityMap.size}x${cityMap.size} grid" }
         val (explorer, cellsVisited) = runEpisode(ExperimentMode.EVALUATE)
         val result = explorer.currentResult()
-        return if (result is RecognitionResult.Recognized) {
-            Outcome.Recognized(result.label, result.confidence, cellsVisited)
-        } else {
-            Outcome.NoMatch(cellsVisited)
-        }
+        val outcome =
+            if (result is RecognitionResult.Recognized) {
+                Outcome.Recognized(result.label, result.confidence, cellsVisited)
+            } else {
+                Outcome.NoMatch(cellsVisited)
+            }
+        logger.info(TAG) { "evaluate() finished: $outcome" }
+        return outcome
     }
 
     /** The shared step loop [train]/[evaluate] both run — only [mode] (via the [EvidenceGraphLM] it wires up) differs between them. */
     private fun runEpisode(mode: ExperimentMode): Pair<CityExplorer, Int> {
-        val sensor = CitySensorModule(sensorId = "$lmId-sensor", cityMap = cityMap)
-        val lm = EvidenceGraphLM(lmId = lmId, memory = memory).apply { setExperimentMode(mode) }
-        val explorer = CityExplorer(sensor, lm)
+        val sensor = CitySensorModule(sensorId = "$lmId-sensor", cityMap = cityMap, logger = logger)
+        val lm = EvidenceGraphLM(lmId = lmId, memory = memory, logger = logger).apply { setExperimentMode(mode) }
+        val explorer = CityExplorer(sensor, lm, logger = logger)
         val remainingCells = allCells().shuffled(random).toMutableList()
 
         explorer.beginExploration()
         var cellsVisited = 0
         while (remainingCells.isNotEmpty()) {
-            val nextCell = explorer.suggestNextLocation()?.takeIf { it in remainingCells } ?: remainingCells.first()
+            val suggestion = explorer.suggestNextLocation()?.takeIf { it in remainingCells }
+            val nextCell = suggestion ?: remainingCells.first()
             remainingCells.remove(nextCell)
 
+            logger.debug(TAG) { "step ${cellsVisited + 1}: visiting $nextCell (${if (suggestion != null) "goal-suggested" else "random"})" }
             explorer.visit(nextCell)
             cellsVisited++
 
@@ -114,4 +134,8 @@ class CityExperiment(
 
     private fun allCells(): List<MapLocation> =
         (0 until cityMap.size).flatMap { x -> (0 until cityMap.size).map { y -> MapLocation(x, y) } }
+
+    private companion object {
+        const val TAG = "CityExperiment"
+    }
 }

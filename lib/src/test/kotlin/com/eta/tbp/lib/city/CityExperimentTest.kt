@@ -1,6 +1,7 @@
 package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
+import com.eta.tbp.lib.log.CollectingLogger
 import com.eta.tbp.lib.memory.GraphMemory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -84,6 +85,22 @@ class CityExperimentTest {
         assertTrue("expected Recognized but was $outcome", outcome is CityExperiment.Outcome.Recognized)
         assertEquals("Springfield", (outcome as CityExperiment.Outcome.Recognized).label)
         assertEquals(setOf("Springfield"), memory.allLabels())
+    }
+
+    @Test
+    fun `a shared logger receives events from every layer of the pipeline`() {
+        val memory = GraphMemory()
+        val logger = CollectingLogger()
+        val experiment = CityExperiment(springfield(origin = MapLocation(1, 1)), memory, random = Random(1), logger = logger)
+
+        experiment.train("Springfield")
+
+        val tags = logger.entries.map { it.tag }.toSet()
+        assertEquals(setOf("CityExperiment", "CityExplorer", "CitySensorModule", "EvidenceGraphLM"), tags)
+        assertTrue(
+            "expected a 'taught' info log but got ${logger.entries}",
+            logger.entries.any { it.level == "I" && it.tag == "EvidenceGraphLM" && it.message.contains("taught 'Springfield'") },
+        )
     }
 
     @Test

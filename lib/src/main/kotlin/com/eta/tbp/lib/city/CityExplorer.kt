@@ -2,6 +2,7 @@ package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
+import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphNode
 
 /**
@@ -25,25 +26,35 @@ import com.eta.tbp.lib.memory.GraphNode
  * one. [RecognitionResult.Ambiguous] means multiple taught cities still fit
  * everything observed so far — the caller should keep exploring (more
  * [visit] calls, then a fresh [endExploration]) rather than guess.
+ *
+ * [logger] logs only what's unique to this layer — the move itself and the
+ * episode's start/end — not [sensorModule]'s or [lm]'s own events, which
+ * each already log themselves if given the same [Logger]. Defaults to
+ * [Logger.None], same as every class in this pipeline.
  */
 class CityExplorer(
     private val sensorModule: CitySensorModule,
     private val lm: EvidenceGraphLM,
+    private val logger: Logger = Logger.Console,
 ) {
     fun beginExploration() {
         lm.preEpisode()
         sensorModule.preEpisode()
+        logger.debug(TAG) { "exploration started" }
     }
 
     /** Moves to [location] (not necessarily adjacent to the last one) and folds its observed feature into the current exploration. */
     fun visit(location: MapLocation) {
+        logger.debug(TAG) { "visiting $location" }
         lm.matchingStep(listOf(sensorModule.step(location)))
     }
 
     fun endExploration(): RecognitionResult {
         sensorModule.postEpisode()
         lm.postEpisode()
-        return lm.recognitionResult()
+        val result = lm.recognitionResult()
+        logger.info(TAG) { "exploration ended: $result" }
+        return result
     }
 
     /** Labels the just-ended exploration as [label] — defines a new city, or merges into an existing one taught under the same label. */
@@ -73,4 +84,8 @@ class CityExplorer(
      * back to its own random pick in that case.
      */
     fun suggestNextLocation(): MapLocation? = lm.suggestNextLocation() as? MapLocation
+
+    private companion object {
+        const val TAG = "CityExplorer"
+    }
 }

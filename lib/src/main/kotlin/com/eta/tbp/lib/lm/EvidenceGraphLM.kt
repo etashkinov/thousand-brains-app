@@ -2,6 +2,7 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
+import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.GraphMatcher
 import com.eta.tbp.lib.memory.GraphMemory
@@ -94,10 +95,16 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * it's already observed/checked — never anything about the domain under
  * exploration itself, which is exactly what keeps it generic over any
  * [Location]/[Feature] pair rather than tied to one caller's domain.
+ *
+ * [logger] defaults to [Logger.None] (silent) so no existing caller/test is
+ * affected by adding it — pass [Logger.Console], or an `app`-side
+ * implementation, to see this class's own events (nodes matched, episode
+ * boundaries, teach outcomes, goal suggestions).
  */
 class EvidenceGraphLM(
     override val lmId: String,
     private val memory: GraphMemory,
+    private val logger: Logger = Logger.Console,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     private val nodeBuffer = mutableListOf<GraphNode>()
     private val checkedLocations = mutableSetOf<Location>()
@@ -108,7 +115,9 @@ class EvidenceGraphLM(
         for (message in messages) {
             message.location?.let { checkedLocations += it }
             if (!message.passMessage) continue
-            nodeBuffer.add(toGraphNode(message))
+            val node = toGraphNode(message)
+            nodeBuffer.add(node)
+            logger.debug(TAG) { "[$lmId] node ${node.id}: '${node.feature.label}' at ${node.location}" }
         }
     }
 
@@ -190,22 +199,29 @@ class EvidenceGraphLM(
     fun suggestNextLocation(): Location? {
         val result = recognitionResult()
         if (result !is RecognitionResult.Ambiguous) return null
-        return suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations)
+        val suggestion = suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations)
+        if (suggestion != null) {
+            logger.debug(TAG) { "[$lmId] suggesting $suggestion to disambiguate ${result.labels}" }
+        }
+        return suggestion
     }
 
     override fun preEpisode() {
         nodeBuffer.clear()
         checkedLocations.clear()
+        logger.debug(TAG) { "[$lmId] episode started" }
     }
 
     override fun postEpisode() {
         if (nodeBuffer.isNotEmpty()) {
             lastCompletedNodes = nodeBuffer.toList()
         }
+        logger.debug(TAG) { "[$lmId] episode ended with ${nodeBuffer.size} node(s) observed" }
     }
 
     override fun setExperimentMode(mode: ExperimentMode) {
         this.mode = mode
+        logger.debug(TAG) { "[$lmId] experiment mode set to $mode" }
     }
 
     override fun state(): Map<String, List<GraphObjectModel>> = memory.snapshot()
@@ -214,9 +230,17 @@ class EvidenceGraphLM(
 
     /** Labels the most recently completed drawing and folds it into memory. No-op before any stroke completes, or outside [ExperimentMode.TRAIN] — see class doc. */
     fun teach(label: String) {
-        if (mode != ExperimentMode.TRAIN) return
-        val nodes = lastCompletedNodes ?: return
+        if (mode != ExperimentMode.TRAIN) {
+            logger.warn(TAG) { "[$lmId] teach('$label') ignored: experiment mode is $mode, not TRAIN" }
+            return
+        }
+        val nodes =
+            lastCompletedNodes ?: run {
+                logger.warn(TAG) { "[$lmId] teach('$label') ignored: nothing observed yet this episode" }
+                return
+            }
         memory.addOrMerge(GraphObjectModel(label, nodes, edgeChainOf(nodes)), label)
+        logger.info(TAG) { "[$lmId] taught '$label' from ${nodes.size} node(s)" }
     }
 
     /** Labels within [xPercentThreshold]% of the max evidence — see the top-level [possibleMatches] this delegates to. */
@@ -229,5 +253,9 @@ class EvidenceGraphLM(
         val location = requireNotNull(message.location) { "Messages fed into matchingStep must carry a location" }
         val feature = requireNotNull(message.feature) { "Messages fed into matchingStep must carry a feature" }
         return GraphNode(id = nodeBuffer.size, location = location, feature = feature)
+    }
+
+    private companion object {
+        const val TAG = "EvidenceGraphLM"
     }
 }

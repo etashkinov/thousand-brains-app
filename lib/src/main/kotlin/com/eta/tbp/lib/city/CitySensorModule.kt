@@ -2,6 +2,7 @@ package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
+import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.sensor.SensorModule
 
 /**
@@ -22,18 +23,25 @@ import com.eta.tbp.lib.sensor.SensorModule
  * are empty, and without this, an empty cell landing anywhere in the
  * observed sequence would force every taught city to score zero (nothing
  * taught has an "empty" node either), not just fail to help.
+ *
+ * [logger] defaults to [Logger.None] (silent), same as every other class in
+ * this pipeline — pass [Logger.Console] (or an `app`-side implementation)
+ * to see every observation this sensor reports.
  */
 class CitySensorModule(
     override val sensorId: String,
     private val cityMap: CityMap,
+    private val logger: Logger = Logger.Console,
 ) : SensorModule<MapLocation> {
     override fun step(observation: MapLocation): CmpMessage {
         val feature = cityMap.featureAt(observation)
+        val passMessage = feature != MapFeature.EMPTY
+        logger.debug(TAG) { "[$sensorId] $observation -> '${feature.label}' (passMessage=$passMessage)" }
         return CmpMessage(
             location = observation,
             feature = feature,
             confidence = 1f,
-            passMessage = feature != MapFeature.EMPTY,
+            passMessage = passMessage,
             senderId = sensorId,
             senderType = SenderType.SM,
             processFeaturesInLm = true,
@@ -43,4 +51,8 @@ class CitySensorModule(
     override fun preEpisode() = Unit
 
     override fun postEpisode() = Unit
+
+    private companion object {
+        const val TAG = "CitySensorModule"
+    }
 }
