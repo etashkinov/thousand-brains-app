@@ -7,6 +7,7 @@ import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.GridEnvironment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,21 +18,21 @@ import kotlin.random.Random
  * moves cell to cell (not necessarily adjacent) in an unfamiliar city,
  * comparing what they observe against every previously taught city, until
  * either a unique match or a confident no-match emerges. Every piece here —
- * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.memory.LabelFeature], [CityMap] — is a thin domain
+ * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.memory.LabelFeature], [GridEnvironment] — is a thin domain
  * plug-in; the actual matching/evidence logic is exactly
  * [com.eta.tbp.lib.memory.GraphMatcher]/[com.eta.tbp.lib.memory.GraphMemory]/
  * [EvidenceGraphLM], unmodified from what the digit-stroke tier uses.
  * [springfield]/[shelbyville]/[capitalCity] (`Cities.kt`) are shared with
  * [CityExperimentTest] rather than each file keeping its own copy.
  *
- * [randomAmong] samples only [CityMap.cells] (the taught landmarks) rather
+ * [randomAmong] samples only [GridEnvironment.cells] (the taught landmarks) rather
  * than [com.eta.tbp.lib.lm.Experiment]'s own whole-grid [Explorer.explore]
  * policy — this file exercises [Explorer]/[EvidenceGraphLM] wiring, not a
  * realistic blind grid tour, which [CityExperimentTest] already covers.
  */
 class CityExplorerTest {
     private fun newExplorer(
-        cityMap: CityMap,
+        cityMap: GridEnvironment,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Explorer {
         val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap)
@@ -41,7 +42,7 @@ class CityExplorerTest {
 
     /** A `() -> Location` that samples uniformly among [cityMap]'s own landmark cells — [Explorer.explore]'s only source of "where to look next" absent a goal suggestion. */
     private fun randomAmong(
-        cityMap: CityMap,
+        cityMap: GridEnvironment,
         random: Random,
     ): () -> Location = { cityMap.cells.keys.random(random) }
 
@@ -54,7 +55,7 @@ class CityExplorerTest {
      * is guaranteed to be observed.
      */
     private fun teach(
-        cityMap: CityMap,
+        cityMap: GridEnvironment,
         label: String,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Map<String, List<GraphObjectModel>> {

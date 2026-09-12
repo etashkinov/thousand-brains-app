@@ -73,7 +73,7 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  * taught) goes through [state]/[loadState] instead, the same
  * checkpoint-restore idiom real Monty uses to load a pretrained model.
  *
- * Generic over [environment]'s domain — a city's grid ([com.eta.tbp.lib.city.CityMap])
+ * Generic over [environment]'s domain — a city's grid ([com.eta.tbp.lib.sensor.GridEnvironment])
  * is the one concrete [Environment] this app has today, but nothing here
  * knows about cells, cities, or [com.eta.tbp.lib.memory.LabelFeature]; a
  * different [Environment] plugs in the same way [Explorer] takes any

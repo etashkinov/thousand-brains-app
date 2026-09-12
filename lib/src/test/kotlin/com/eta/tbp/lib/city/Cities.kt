@@ -3,12 +3,13 @@ package com.eta.tbp.lib.city
 import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.FloatLocation.Companion.invoke
+import com.eta.tbp.lib.sensor.GridEnvironment
 import kotlin.random.Random
 
 fun springfield(
     origin: Location,
     random: Random = Random.Default,
-) = CityMap.of(
+) = GridEnvironment.of(
     size = 10,
     origin to "post_office",
     origin.plus(FloatLocation(2f, 1f)) to "park",
@@ -19,7 +20,7 @@ fun springfield(
 fun shelbyville(
     origin: Location,
     random: Random = Random.Default,
-) = CityMap.of(
+) = GridEnvironment.of(
     size = 10,
     origin to "post_office",
     origin.plus(FloatLocation(2f, 1f)) to "park",
@@ -30,7 +31,7 @@ fun shelbyville(
 fun capitalCity(
     origin: Location,
     random: Random = Random.Default,
-) = CityMap.of(
+) = GridEnvironment.of(
     size = 10,
     origin to "school",
     origin.plus(FloatLocation(3f, 1f)) to "hospital",

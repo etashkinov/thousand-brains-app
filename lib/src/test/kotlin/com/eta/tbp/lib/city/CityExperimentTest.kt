@@ -7,6 +7,7 @@ import com.eta.tbp.lib.log.CollectingLogger
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
+import com.eta.tbp.lib.sensor.GridEnvironment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,9 +15,9 @@ import kotlin.random.Random
 
 /**
  * [Experiment] no longer takes its own `random` — exploration randomness
- * lives on [CityMap.randomLocation] instead (see [Environment][com.eta.tbp.lib.sensor.Environment]'s
+ * lives on [GridEnvironment.randomLocation] instead (see [Environment][com.eta.tbp.lib.sensor.Environment]'s
  * own doc). Every [springfield]/[shelbyville] call below passes an explicit
- * seed for that reason: an unseeded [CityMap] draws from [Random.Default],
+ * seed for that reason: an unseeded [GridEnvironment] draws from [Random.Default],
  * which isn't fixed across runs, so assertions that depend on a particular
  * outcome (not just "some locationsVisited count") need a reproducible visit
  * order to avoid flaking.
@@ -30,10 +31,10 @@ class CityExperimentTest {
      * before teaching (e.g. a second call teaching a further label alongside an earlier one); the
      * returned state is what a caller feeds into the next [teachManually] call, or into an
      * [Experiment] via [Experiment.loadState]. [random] is seeded by the caller — same
-     * reason every [CityMap] fixture below takes an explicit seed, see this class's own note.
+     * reason every [GridEnvironment] fixture below takes an explicit seed, see this class's own note.
      */
     private fun teachManually(
-        cityMap: CityMap,
+        cityMap: GridEnvironment,
         label: String,
         priorState: Map<String, List<GraphObjectModel>> = emptyMap(),
         random: Random = Random(0),
