@@ -3,10 +3,11 @@ package com.eta.tbp.lib.city
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.log.Logger
+import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.SensorModule
 
 /**
- * The `SensorModule<MapLocation>` for the city domain: given the cell the
+ * The [SensorModule] implementation for the city domain: given the cell the
  * explorer just moved to, reports that cell's [MapFeature] straight from
  * [cityMap]. No segmentation step is needed the way
  * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] needs one for a continuous
@@ -24,16 +25,15 @@ import com.eta.tbp.lib.sensor.SensorModule
  * observed sequence would force every taught city to score zero (nothing
  * taught has an "empty" node either), not just fail to help.
  *
- * [logger] defaults to [Logger.None] (silent), same as every other class in
- * this pipeline — pass [Logger.Console] (or an `app`-side implementation)
- * to see every observation this sensor reports.
+ * [logger] defaults to [Logger.Console] (silent), same as every other class in
+ * this pipeline
  */
 class CitySensorModule(
     override val sensorId: String,
     private val cityMap: CityMap,
     private val logger: Logger = Logger.Console,
-) : SensorModule<MapLocation> {
-    override fun step(observation: MapLocation): CmpMessage {
+) : SensorModule {
+    override fun step(observation: Location): CmpMessage {
         val feature = cityMap.featureAt(observation)
         val passMessage = feature != MapFeature.EMPTY
         logger.debug(TAG) { "[$sensorId] $observation -> '${feature.label}' (passMessage=$passMessage)" }

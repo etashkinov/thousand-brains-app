@@ -6,6 +6,8 @@ import kotlin.math.sqrt
 class FloatLocation(
     val location: FloatArray,
 ) : Location {
+//    constructor(vararg elements: Float) : this(floatArrayOf(*elements))
+
     override fun displacement(from: Location): Location {
         if (from !is FloatLocation) {
             return Location.Infinity

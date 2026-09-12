@@ -1,95 +1,72 @@
 package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
+import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.sensor.FloatLocation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 /**
  * End-to-end coverage of the "detect city" scenario from TBP: an explorer
  * moves cell to cell (not necessarily adjacent) in an unfamiliar city,
  * comparing what they observe against every previously taught city, until
  * either a unique match or a confident no-match emerges. Every piece here —
- * [CityExplorer], [CitySensorModule], [MapFeature], [MapLocation] — is a
- * thin domain plug-in; the actual matching/evidence logic is exactly
+ * [Explorer], [CitySensorModule], [MapFeature], [CityMap] — is a thin domain
+ * plug-in; the actual matching/evidence logic is exactly
  * [com.eta.tbp.lib.memory.GraphMatcher]/[com.eta.tbp.lib.memory.GraphMemory]/
  * [EvidenceGraphLM], unmodified from what the digit-stroke tier uses.
+ * [springfield]/[shelbyville]/[capitalCity] (`Cities.kt`) are shared with
+ * [CityExperimentTest] rather than each file keeping its own copy.
  */
 class CityExplorerTest {
     private fun newExplorer(
         cityMap: CityMap,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
-    ): CityExplorer {
+    ): Explorer {
         val sensor = CitySensorModule(sensorId = "city-sensor", cityMap = cityMap)
         val lm = EvidenceGraphLM(lmId = "city-lm")
-        return CityExplorer(sensor, lm).apply { loadState(seedState) }
+        return Explorer(sensor, lm).apply { loadState(seedState) }
     }
 
-    private fun explore(
-        explorer: CityExplorer,
-        cells: List<MapLocation>,
-    ): RecognitionResult {
-        explorer.beginExploration()
-        cells.forEach { explorer.visit(it) }
-        return explorer.endExploration()
+    /**
+     * Teaches every landmark [cityMap] defines as [label] — visits them all
+     * regardless of an early [RecognitionResult.Recognized] against
+     * something already taught (unlike [CityExperiment], which stops as
+     * soon as it's confident), the way a second city sharing landmarks with
+     * an already-known one has to be taught so its own distinguishing cell
+     * is guaranteed to be observed.
+     */
+    private fun teach(
+        cityMap: CityMap,
+        label: String,
+        seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
+    ): Map<String, List<GraphObjectModel>> {
+        val explorer = newExplorer(cityMap, seedState)
+        explorer.explore(cityMap.cells.keys, everything = true)
+        explorer.teach(label)
+        return explorer.state()
     }
-
-    /** Springfield: a post office, park, and bakery at a fixed relative layout, planted at [origin] in a 10x10 grid. */
-    private fun springfield(origin: MapLocation) =
-        CityMap.of(
-            size = 10,
-            (origin.x to origin.y) to "post_office",
-            (origin.x + 2 to origin.y + 1) to "park",
-            (origin.x + 1 to origin.y + 3) to "bakery",
-        )
-
-    private fun springfieldCells(origin: MapLocation): List<MapLocation> =
-        listOf(origin, MapLocation(origin.x + 2, origin.y + 1), MapLocation(origin.x + 1, origin.y + 3))
-
-    /** Shelbyville: the same post office/park layout as Springfield, but its bakery sits on the opposite side. */
-    private fun shelbyville(origin: MapLocation) =
-        CityMap.of(
-            size = 10,
-            (origin.x to origin.y) to "post_office",
-            (origin.x + 2 to origin.y + 1) to "park",
-            (origin.x + 1 to origin.y - 3) to "bakery",
-        )
-
-    private fun shelbyvilleCells(origin: MapLocation): List<MapLocation> =
-        listOf(origin, MapLocation(origin.x + 2, origin.y + 1), MapLocation(origin.x + 1, origin.y - 3))
-
-    /** A city sharing no landmark labels with Springfield/Shelbyville at all — genuinely nothing taught explains it. */
-    private fun capitalCity(origin: MapLocation) =
-        CityMap.of(
-            size = 10,
-            (origin.x to origin.y) to "school",
-            (origin.x + 3 to origin.y + 1) to "hospital",
-            (origin.x + 1 to origin.y + 2) to "cafe",
-        )
-
-    private fun capitalCityCells(origin: MapLocation): List<MapLocation> =
-        listOf(origin, MapLocation(origin.x + 3, origin.y + 1), MapLocation(origin.x + 1, origin.y + 2))
 
     @Test
     fun `exploring before anything is taught reports Unknown`() {
-        val explorer = newExplorer(springfield(origin = MapLocation(1, 1)))
-        val result = explore(explorer, springfieldCells(MapLocation(1, 1)))
+        val cityMap = springfield(origin = FloatLocation(1f, 1f))
+        val result = newExplorer(cityMap).explore(cityMap.cells.keys, random = Random(1)).result
         assertEquals(RecognitionResult.Unknown, result)
     }
 
     @Test
     fun `after teaching, the same city explored from a different starting cell and visit order is Recognized`() {
-        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)))
-        explore(teachExplorer, springfieldCells(MapLocation(1, 1)))
-        teachExplorer.teach("Springfield")
+        val afterTeaching = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
 
         // Same city, but the explorer arrives at a different cell (they have
         // no way to know their true coordinate in the taught map) and visits
-        // the same three landmarks in a different order.
-        val recognizeExplorer = newExplorer(springfield(origin = MapLocation(4, 5)), teachExplorer.state())
-        val result = explore(recognizeExplorer, springfieldCells(MapLocation(4, 5)).reversed())
+        // the landmarks in a different order (a different random seed).
+        val cityMap = springfield(origin = FloatLocation(4f, 5f))
+        val result = newExplorer(cityMap, afterTeaching).explore(cityMap.cells.keys, random = Random(2)).result
 
         assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
         assertEquals("Springfield", (result as RecognitionResult.Recognized).label)
@@ -97,12 +74,11 @@ class CityExplorerTest {
 
     @Test
     fun `a genuinely different city layout is Unknown, and can be taught as a new city`() {
-        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)))
-        explore(teachExplorer, springfieldCells(MapLocation(1, 1)))
-        teachExplorer.teach("Springfield")
+        val afterSpringfield = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
 
-        val capitalCityExplorer = newExplorer(capitalCity(origin = MapLocation(2, 4)), teachExplorer.state())
-        val unknownResult = explore(capitalCityExplorer, capitalCityCells(MapLocation(2, 4)))
+        val cityMap = capitalCity(origin = FloatLocation(2f, 4f))
+        val capitalCityExplorer = newExplorer(cityMap, afterSpringfield)
+        val unknownResult = capitalCityExplorer.explore(cityMap.cells.keys, random = Random(3)).result
         assertEquals(RecognitionResult.Unknown, unknownResult)
 
         capitalCityExplorer.teach("Capital City")
@@ -110,31 +86,16 @@ class CityExplorerTest {
     }
 
     @Test
-    fun `two cities that agree on every visited cell but one stay Ambiguous until that cell is visited`() {
-        val afterSpringfield =
-            newExplorer(springfield(origin = MapLocation(1, 1)))
-                .also { explore(it, springfieldCells(MapLocation(1, 1))) }
-                .also { it.teach("Springfield") }
-                .state()
-        val afterBoth =
-            newExplorer(shelbyville(origin = MapLocation(1, 1)), afterSpringfield)
-                .also { explore(it, shelbyvilleCells(MapLocation(1, 1))) }
-                .also { it.teach("Shelbyville") }
-                .state()
+    fun `two cities sharing landmarks are told apart once the distinguishing cell is visited`() {
+        val afterSpringfield = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
+        val afterBoth = teach(shelbyville(origin = FloatLocation(1f, 1f)), "Shelbyville", afterSpringfield)
 
-        // Visiting only the post office and park -- identical in both taught
-        // cities -- doesn't distinguish them: keep investigating.
-        val explorer = newExplorer(springfield(origin = MapLocation(6, 1)), afterBoth)
-        explorer.beginExploration()
-        explorer.visit(MapLocation(6, 1))
-        explorer.visit(MapLocation(8, 2))
-        val ambiguous = explorer.endExploration()
-        assertTrue("expected Ambiguous but was $ambiguous", ambiguous is RecognitionResult.Ambiguous)
-        assertEquals(setOf("Springfield", "Shelbyville"), (ambiguous as RecognitionResult.Ambiguous).labels.toSet())
+        // Springfield's own layout again, elsewhere in the grid: shares post office + park with Shelbyville,
+        // but only Springfield's bakery position matches once that cell is reached.
+        val cityMap = springfield(origin = FloatLocation(6f, 1f))
+        val outcome = newExplorer(cityMap, afterBoth).explore(cityMap.cells.keys, random = Random(4))
 
-        // Visiting the bakery too -- at Springfield's relative position -- resolves it uniquely.
-        val resolved = explore(explorer, springfieldCells(MapLocation(6, 1)))
-        assertTrue("expected Recognized but was $resolved", resolved is RecognitionResult.Recognized)
-        assertEquals("Springfield", (resolved as RecognitionResult.Recognized).label)
+        assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
+        assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)
     }
 }

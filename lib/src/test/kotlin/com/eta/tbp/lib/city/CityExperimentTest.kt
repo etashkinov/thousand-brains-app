@@ -1,36 +1,17 @@
 package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
+import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.log.CollectingLogger
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.sensor.FloatLocation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
 
 class CityExperimentTest {
-    private fun springfield(origin: MapLocation) =
-        CityMap.of(
-            size = 10,
-            (origin.x to origin.y) to "post_office",
-            (origin.x + 2 to origin.y + 1) to "park",
-            (origin.x + 1 to origin.y + 3) to "bakery",
-        )
-
-    private fun springfieldCells(origin: MapLocation): List<MapLocation> =
-        listOf(origin, MapLocation(origin.x + 2, origin.y + 1), MapLocation(origin.x + 1, origin.y + 3))
-
-    private fun shelbyville(origin: MapLocation) =
-        CityMap.of(
-            size = 10,
-            (origin.x to origin.y) to "post_office",
-            (origin.x + 2 to origin.y + 1) to "park",
-            (origin.x + 1 to origin.y - 3) to "bakery",
-        )
-
-    private fun shelbyvilleCells(origin: MapLocation): List<MapLocation> =
-        listOf(origin, MapLocation(origin.x + 2, origin.y + 1), MapLocation(origin.x + 1, origin.y - 3))
-
     /**
      * Deliberately visits every one of [cells] (unlike [CityExperiment], which stops as soon as
      * it's confident) and teaches [label] — how a second city sharing landmarks with an
@@ -42,25 +23,24 @@ class CityExperimentTest {
      */
     private fun teachManually(
         cityMap: CityMap,
-        cells: List<MapLocation>,
         label: String,
         priorState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Map<String, List<GraphObjectModel>> {
         val explorer =
-            CityExplorer(
+            Explorer(
                 CitySensorModule(sensorId = "teach-sensor", cityMap = cityMap),
                 EvidenceGraphLM(lmId = "teach-lm"),
             ).apply { loadState(priorState) }
-        explorer.beginExploration()
-        cells.forEach { explorer.visit(it) }
-        explorer.endExploration()
+
+        explorer.explore(cityMap.cells.keys, true)
+
         explorer.teach(label)
         return explorer.state()
     }
 
     @Test
     fun `train tours an unfamiliar city in full and teaches it as a new one`() {
-        val experiment = CityExperiment(springfield(origin = MapLocation(1, 1)), random = Random(1))
+        val experiment = CityExperiment(springfield(origin = FloatLocation(1f, 1f)), random = Random(1))
 
         val outcome = experiment.train("Springfield")
 
@@ -72,7 +52,7 @@ class CityExperimentTest {
 
     @Test
     fun `evaluate tours an unfamiliar city in full and reports NoMatch without touching memory`() {
-        val experiment = CityExperiment(springfield(origin = MapLocation(1, 1)), random = Random(1))
+        val experiment = CityExperiment(springfield(origin = FloatLocation(1f, 1f)), random = Random(1))
 
         val outcome = experiment.evaluate()
 
@@ -83,12 +63,12 @@ class CityExperimentTest {
 
     @Test
     fun `a known city replanted elsewhere in the grid is recognized regardless of random visit order`() {
-        val teachExperiment = CityExperiment(springfield(origin = MapLocation(1, 1)), random = Random(1))
+        val teachExperiment = CityExperiment(springfield(origin = FloatLocation(1f, 1f)), random = Random(1))
         teachExperiment.train("Springfield")
 
         // Same relative layout, moved to a different part of the grid, explored with a different
         // random seed (different visit order) — a fresh "session" loading what the first one taught.
-        val evalExperiment = CityExperiment(springfield(origin = MapLocation(6, 5)), random = Random(42))
+        val evalExperiment = CityExperiment(springfield(origin = FloatLocation(6f, 5f)), random = Random(42))
         evalExperiment.loadState(teachExperiment.state())
         val outcome = evalExperiment.evaluate()
 
@@ -100,12 +80,12 @@ class CityExperimentTest {
     @Test
     fun `a shared logger receives events from every layer of the pipeline`() {
         val logger = CollectingLogger()
-        val experiment = CityExperiment(springfield(origin = MapLocation(1, 1)), random = Random(1), logger = logger)
+        val experiment = CityExperiment(springfield(origin = FloatLocation(1f, 1f)), random = Random(1), logger = logger)
 
         experiment.train("Springfield")
 
         val tags = logger.entries.map { it.tag }.toSet()
-        assertEquals(setOf("CityExperiment", "CityExplorer", "CitySensorModule", "EvidenceGraphLM"), tags)
+        assertEquals(setOf("CityExperiment", "Explorer", "CitySensorModule", "EvidenceGraphLM"), tags)
         assertTrue(
             "expected a 'taught' info log but got ${logger.entries}",
             logger.entries.any { it.level == "I" && it.tag == "EvidenceGraphLM" && it.message.contains("taught 'Springfield'") },
@@ -114,18 +94,19 @@ class CityExperimentTest {
 
     @Test
     fun `two cities sharing landmarks are told apart once the distinguishing cell is visited`() {
-        val afterSpringfield = teachManually(springfield(origin = MapLocation(1, 1)), springfieldCells(MapLocation(1, 1)), "Springfield")
+        val sp = springfield(origin = FloatLocation(1f, 1f))
+        val afterSpringfield =
+            teachManually(sp, "Springfield")
         val afterBoth =
             teachManually(
-                shelbyville(origin = MapLocation(1, 1)),
-                shelbyvilleCells(MapLocation(1, 1)),
+                shelbyville(origin = FloatLocation(1f, 1f)),
                 "Shelbyville",
                 afterSpringfield,
             )
 
         // Springfield's own layout again, elsewhere in the grid: shares post office + park with Shelbyville,
         // but only Springfield's bakery position matches once that cell is reached.
-        val experiment = CityExperiment(springfield(origin = MapLocation(6, 1)), random = Random(7))
+        val experiment = CityExperiment(springfield(origin = FloatLocation(6f, 1f)), random = Random(7))
         experiment.loadState(afterBoth)
         val outcome = experiment.evaluate()
 

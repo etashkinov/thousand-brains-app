@@ -6,7 +6,7 @@ package com.eta.tbp.lib.orchestrator
 // class drives PrimitiveSensorModule (see that file's own note) and reads
 // CmpMessage.nonMorphologicalFeatures, which no longer exists now that
 // CmpMessage carries a generic `feature: Feature?` instead. The "city"
-// evidence-graph work (com.eta.tbp.lib.city.CityExplorer) is this domain's
+// evidence-graph work (com.eta.tbp.lib.lm.Explorer) is this domain's
 // analogous orchestrator, built against the current kernel instead of this
 // one. Kotlin nests block comments, so the class body below (including its
 // own KDoc) is safely inert.

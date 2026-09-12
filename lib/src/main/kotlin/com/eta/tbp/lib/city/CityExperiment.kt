@@ -2,9 +2,13 @@ package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.ExperimentMode
+import com.eta.tbp.lib.lm.ExplorationOutcome
+import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.sensor.FloatLocation
 import kotlin.random.Random
 
 /**
@@ -18,13 +22,17 @@ import kotlin.random.Random
  *
  * - [RecognitionResult.Recognized] (unique match) → stop, report it.
  * - [RecognitionResult.Ambiguous] (multiple known cities still fit) → ask
- *   the LM (via [CityExplorer.suggestNextLocation], its own embedded Goal
- *   State Generator — see [com.eta.tbp.lib.lm.EvidenceGraphLM.suggestNextLocation])
+ *   the LM (via [Explorer.suggestNextLocation], its own embedded Goal State
+ *   Generator — see [com.eta.tbp.lib.lm.EvidenceGraphLM.suggestNextLocation])
  *   where visiting next would best tell the tied candidates apart, rather
  *   than picking blindly. Real Monty does the same once its own hypotheses
  *   narrow.
  * - [RecognitionResult.Unknown], or no suggestion available → nothing to
  *   disambiguate between yet, so just visit the next random cell.
+ *
+ * This whole loop — [Explorer]'s motor system, see its own class doc — is
+ * generic and lives in [Explorer.explore]; [runEpisode] here only supplies
+ * this domain's own candidate set ([allCells]).
  *
  * [train] and [evaluate] mirror `MontyExperiment.train()`/`.evaluate()`, not
  * one method with a mode flag: they diverge in exactly one place, whether
@@ -44,20 +52,21 @@ import kotlin.random.Random
  * `passMessage = false` — one lookup, never touching the LM's evidence.
  *
  * [logger] defaults to [Logger.None] (silent) and, when set, is handed down
- * to every [CitySensorModule]/[EvidenceGraphLM]/[CityExplorer] this class
- * wires up — one [Logger] for the whole pipeline, each layer tagging its
- * own events.
+ * to every [CitySensorModule]/[EvidenceGraphLM]/[Explorer] this class wires
+ * up — one [Logger] for the whole pipeline, each layer tagging its own
+ * events.
  *
  * [sensor]/[lm]/[explorer] are built exactly once, in this class's own
  * initializer, and reused by every [train]/[evaluate] call on this
  * instance — mirroring real Monty's own `Monty` object, which is
  * constructed once per experiment and persists across every episode
  * (`MontyExperiment.pre_episode()` calls `self.model.reset()`, it never
- * recreates `self.model`). [runEpisode] relies on [CityExplorer.beginExploration]/
- * [CityExplorer.endExploration] (which forward to [lm]/[sensor]'s own
- * `preEpisode()`/`postEpisode()`) to clear per-episode-only state between
- * calls — [lm]'s taught cities are never touched by that reset, exactly
- * like [lm]'s own doc describes for [EvidenceGraphLM.preEpisode].
+ * recreates `self.model`). [Explorer.explore] relies on
+ * [Explorer.beginExploration]/[Explorer.endExploration] (which forward to
+ * [lm]/[sensor]'s own `preEpisode()`/`postEpisode()`) to clear
+ * per-episode-only state between calls — [lm]'s taught cities are never
+ * touched by that reset, exactly like [lm]'s own doc describes for
+ * [EvidenceGraphLM.preEpisode].
  *
  * [lm] owns and constructs its own [com.eta.tbp.lib.memory.GraphMemory]
  * internally (see [EvidenceGraphLM]'s own doc) rather than this class
@@ -74,7 +83,7 @@ class CityExperiment(
 ) {
     private val sensor = CitySensorModule(sensorId = "$lmId-sensor", cityMap = cityMap, logger = logger)
     private val lm = EvidenceGraphLM(lmId = lmId, logger = logger)
-    private val explorer = CityExplorer(sensor, lm, logger = logger)
+    private val explorer = Explorer(sensor, lm, logger = logger)
 
     sealed class Outcome {
         /** [cellsVisited] is how many cells it took before the match became unique — never more than the grid's own cell count. */
@@ -99,14 +108,14 @@ class CityExperiment(
     /** Explores [cityMap] and, if nothing already taught uniquely matches, teaches [label] as a new city — real Monty's TRAIN behavior (a known ground-truth label, supplied by the caller the same way a labeled dataset entry supplies one). */
     fun train(label: String): Outcome {
         logger.info(TAG) { "train('$label') starting on a ${cityMap.size}x${cityMap.size} grid" }
-        val cellsVisited = runEpisode(ExperimentMode.TRAIN)
-        val result = explorer.currentResult()
+        val exploration = runEpisode(ExperimentMode.TRAIN)
+        val result = exploration.result
         val outcome =
             if (result is RecognitionResult.Recognized) {
-                Outcome.Recognized(result.label, result.confidence, cellsVisited)
+                Outcome.Recognized(result.label, result.confidence, exploration.locationsVisited)
             } else {
                 explorer.teach(label) // Belt-and-suspenders: the real gate is EvidenceGraphLM's own ExperimentMode check.
-                Outcome.Taught(label, cellsVisited)
+                Outcome.Taught(label, exploration.locationsVisited)
             }
         logger.info(TAG) { "train('$label') finished: $outcome" }
         return outcome
@@ -115,13 +124,13 @@ class CityExperiment(
     /** Explores [cityMap] purely to check it against what's already known — never writes to [lm]'s memory, matching real Monty's EVALUATE behavior. */
     fun evaluate(): Outcome {
         logger.info(TAG) { "evaluate() starting on a ${cityMap.size}x${cityMap.size} grid" }
-        val cellsVisited = runEpisode(ExperimentMode.EVALUATE)
-        val result = explorer.currentResult()
+        val exploration = runEpisode(ExperimentMode.EVALUATE)
+        val result = exploration.result
         val outcome =
             if (result is RecognitionResult.Recognized) {
-                Outcome.Recognized(result.label, result.confidence, cellsVisited)
+                Outcome.Recognized(result.label, result.confidence, exploration.locationsVisited)
             } else {
-                Outcome.NoMatch(cellsVisited)
+                Outcome.NoMatch(exploration.locationsVisited)
             }
         logger.info(TAG) { "evaluate() finished: $outcome" }
         return outcome
@@ -133,32 +142,14 @@ class CityExperiment(
     /** Loads previously taught cities (from [state]) into [lm]. */
     fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
 
-    /** The shared step loop [train]/[evaluate] both run on [explorer] — only [mode] differs between them. */
-    private fun runEpisode(mode: ExperimentMode): Int {
+    /** Runs [explorer]'s motor system ([Explorer.explore]) over every grid cell — only [mode] differs between [train]/[evaluate]. */
+    private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
         lm.setExperimentMode(mode)
-        val remainingCells = allCells().shuffled(random).toMutableList()
-
-        explorer.beginExploration()
-        var cellsVisited = 0
-        while (remainingCells.isNotEmpty()) {
-            val suggestion = explorer.suggestNextLocation()?.takeIf { it in remainingCells }
-            val nextCell = suggestion ?: remainingCells.first()
-            remainingCells.remove(nextCell)
-
-            logger.debug(TAG) { "step ${cellsVisited + 1}: visiting $nextCell (${if (suggestion != null) "goal-suggested" else "random"})" }
-            explorer.visit(nextCell)
-            cellsVisited++
-
-            if (explorer.currentResult() is RecognitionResult.Recognized) break
-            // Ambiguous or Unknown: not resolved yet, keep moving.
-        }
-
-        explorer.endExploration()
-        return cellsVisited
+        return explorer.explore(allCells(), random = random)
     }
 
-    private fun allCells(): List<MapLocation> =
-        (0 until cityMap.size).flatMap { x -> (0 until cityMap.size).map { y -> MapLocation(x, y) } }
+    private fun allCells(): List<Location> =
+        (0 until cityMap.size).flatMap { x -> (0 until cityMap.size).map { y -> FloatLocation(x.toFloat(), y.toFloat()) } }
 
     private companion object {
         const val TAG = "CityExperiment"
