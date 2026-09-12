@@ -18,7 +18,9 @@ import kotlin.math.abs
  * Implements [Feature] so [com.eta.tbp.lib.memory.GraphMatcher]/
  * [com.eta.tbp.lib.memory.GraphMemory] can compare/merge [PrimitiveFeature]
  * nodes generically: a label mismatch is an infinite [difference] (never a
- * match, same as the old hard-coded gate), otherwise the plain [extent] error.
+ * match, same as the old hard-coded gate — reusing [Feature]'s own default
+ * for that part), otherwise the plain [extent] error, which [Feature]'s
+ * label-only default has no notion of.
  */
 data class PrimitiveFeature(
     override val label: String,
@@ -30,7 +32,8 @@ data class PrimitiveFeature(
             return Float.POSITIVE_INFINITY
         }
 
-        return if (label != other.label) Float.POSITIVE_INFINITY else abs(extent - other.extent)
+        val labelDifference = super.difference(other)
+        return if (labelDifference.isInfinite()) labelDifference else abs(extent - other.extent)
     }
 
     override fun mergedWith(

@@ -1,6 +1,5 @@
-package com.eta.tbp.lib.city
+package com.eta.tbp.lib.memory
 
-import com.eta.tbp.lib.sensor.LabelFeature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

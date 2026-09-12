@@ -17,7 +17,7 @@ import kotlin.random.Random
  * moves cell to cell (not necessarily adjacent) in an unfamiliar city,
  * comparing what they observe against every previously taught city, until
  * either a unique match or a confident no-match emerges. Every piece here —
- * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.sensor.LabelFeature], [CityMap] — is a thin domain
+ * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.memory.LabelFeature], [CityMap] — is a thin domain
  * plug-in; the actual matching/evidence logic is exactly
  * [com.eta.tbp.lib.memory.GraphMatcher]/[com.eta.tbp.lib.memory.GraphMemory]/
  * [EvidenceGraphLM], unmodified from what the digit-stroke tier uses.

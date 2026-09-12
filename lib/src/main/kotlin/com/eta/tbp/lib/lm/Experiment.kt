@@ -75,7 +75,7 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  *
  * Generic over [environment]'s domain — a city's grid ([com.eta.tbp.lib.city.CityMap])
  * is the one concrete [Environment] this app has today, but nothing here
- * knows about cells, cities, or [com.eta.tbp.lib.sensor.LabelFeature]; a
+ * knows about cells, cities, or [com.eta.tbp.lib.memory.LabelFeature]; a
  * different [Environment] plugs in the same way [Explorer] takes any
  * [com.eta.tbp.lib.sensor.SensorModule].
  */

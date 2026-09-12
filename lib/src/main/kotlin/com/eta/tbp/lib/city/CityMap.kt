@@ -1,13 +1,13 @@
 package com.eta.tbp.lib.city
 
+import com.eta.tbp.lib.memory.LabelFeature
 import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.Environment
 import com.eta.tbp.lib.sensor.FloatLocation
-import com.eta.tbp.lib.sensor.LabelFeature
 import kotlin.random.Random
 
 /**
- * The NxN grid of [com.eta.tbp.lib.sensor.LabelFeature]s a [com.eta.tbp.lib.sensor.EnvironmentSensorModule] senses from — the
+ * The NxN grid of [LabelFeature]s a [com.eta.tbp.lib.sensor.EnvironmentSensorModule] senses from — the
  * "ground truth" city an explorer moves around in, standing in for a real
  * Monty environment the same way [com.eta.tbp.lib.sensor.RawPoint] stands
  * in for a real touch sensor's raw signal in this app's other domain.

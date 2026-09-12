@@ -45,7 +45,7 @@ package com.eta.tbp.lib.memory
  * match (a hard veto, e.g. a taught label mismatch) — so this object has
  * zero domain-specific code for either
  * [com.eta.tbp.lib.sensor.FloatLocation]/[com.eta.tbp.lib.sensor.PrimitiveFeature]
- * or [com.eta.tbp.lib.city.MapLocation]/[com.eta.tbp.lib.sensor.LabelFeature].
+ * or [com.eta.tbp.lib.city.MapLocation]/[LabelFeature].
  */
 object GraphMatcher {
     private const val NO_MATCH = 0f
