@@ -4,6 +4,7 @@ import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphNode
+import com.eta.tbp.lib.memory.GraphObjectModel
 
 /**
  * Mirrors [com.eta.tbp.lib.orchestrator.MontyOrchestrator]'s
@@ -59,6 +60,12 @@ class CityExplorer(
 
     /** Labels the just-ended exploration as [label] — defines a new city, or merges into an existing one taught under the same label. */
     fun teach(label: String) = lm.teach(label)
+
+    /** [lm]'s own taught cities, for moving them into another [EvidenceGraphLM] instance — see [EvidenceGraphLM]'s own doc for why [lm] owns its [com.eta.tbp.lib.memory.GraphMemory] rather than taking one externally. */
+    fun state(): Map<String, List<GraphObjectModel>> = lm.state()
+
+    /** Loads previously taught cities (from [state]) into [lm] — e.g. seeding a fresh [CityExplorer] with what another one already taught. */
+    fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
 
     /** The full evidence breakdown across every taught city — for direct introspection, same spirit as [EvidenceGraphLM.evidenceSnapshot]. */
     fun evidenceSnapshot(): Map<String, Float> = lm.evidenceSnapshot()

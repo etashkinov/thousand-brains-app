@@ -2,7 +2,6 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
-import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.PrimitiveFeature
 import org.junit.Assert.assertEquals
@@ -11,10 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EvidenceGraphLMTest {
-    private fun newLm(
-        id: String = "lm-0",
-        memory: GraphMemory = GraphMemory(),
-    ) = EvidenceGraphLM(lmId = id, memory = memory)
+    private fun newLm(id: String = "lm-0") = EvidenceGraphLM(lmId = id)
 
     private fun message(
         x: Float,
@@ -62,8 +58,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `a translated instance of a taught shape scores its own label highest`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -108,8 +103,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `a confidently recognized shape reports exactly one possible match`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -127,8 +121,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `two structurally identical shapes taught under different labels tie`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lShape())
         evidenceGraphLM.teach("L")
@@ -145,8 +138,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `suggestNextLocation proposes where the tied hypotheses disagree, using this LM's own memory and observations`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         // "L" and "L2" agree on their first two nodes but differ in the third.
         drive(evidenceGraphLM, listOf(message(0f, 0f, "line"), message(0f, 1f, "line"), message(1f, 1f, "arc")))
@@ -175,8 +167,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `partial evidence during an in-progress episode narrows down as more nodes arrive`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -195,8 +186,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `an unrecognized first node doesn't stop a later, recognized node from anchoring the match`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -211,8 +201,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `teaching still records every observed node even when none of them matched anything taught`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -221,11 +210,12 @@ class EvidenceGraphLMTest {
         drive(evidenceGraphLM, listOf(message(0f, 0f, "square"), message(1f, 0f, "square"), message(1f, 1f, "square")))
         evidenceGraphLM.teach("square")
 
-        assertEquals(setOf("line", "square"), memory.allLabels())
+        assertEquals(setOf("line", "square"), evidenceGraphLM.state().keys)
         assertEquals(
             3,
-            memory
-                .candidatesForLabel("square")
+            evidenceGraphLM
+                .state()
+                .getValue("square")
                 .single()
                 .nodes.size,
         )
@@ -233,24 +223,22 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `teach is a no-op in EVALUATE mode but works again once switched back to TRAIN`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         evidenceGraphLM.setExperimentMode(ExperimentMode.EVALUATE)
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
-        assertEquals(emptySet<String>(), memory.allLabels())
+        assertEquals(emptySet<String>(), evidenceGraphLM.state().keys)
 
         evidenceGraphLM.setExperimentMode(ExperimentMode.TRAIN)
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
-        assertEquals(setOf("line"), memory.allLabels())
+        assertEquals(setOf("line"), evidenceGraphLM.state().keys)
     }
 
     @Test
     fun `state captures taught labels and loadState restores them into a fresh instance`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")
@@ -269,8 +257,7 @@ class EvidenceGraphLMTest {
 
     @Test
     fun `getOutput's confidence matches the top evidence value once something is taught and observed`() {
-        val memory = GraphMemory()
-        val evidenceGraphLM = newLm(memory = memory)
+        val evidenceGraphLM = newLm()
 
         drive(evidenceGraphLM, lineShape())
         evidenceGraphLM.teach("line")

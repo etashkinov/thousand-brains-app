@@ -103,9 +103,22 @@ import com.eta.tbp.lib.memory.edgeChainOf
  */
 class EvidenceGraphLM(
     override val lmId: String,
-    private val memory: GraphMemory,
     private val logger: Logger = Logger.Console,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
+    /**
+     * Owned and constructed here, not injected — mirrors real Monty's
+     * `EvidenceGraphLM.__init__` building its own `self.graph_memory`
+     * (`evidence_matching/learning_module.py`). A prior version of this
+     * class took a [GraphMemory] as a constructor parameter, built by
+     * whatever wired the LM up; that only existed to work around
+     * [com.eta.tbp.lib.city.CityExperiment] rebuilding its LM on every
+     * episode, and let a caller reach in and share one mutable [GraphMemory]
+     * across separate LM instances — [state]/[loadState] (already the
+     * `LearningModule` contract's own checkpoint mechanism, matching
+     * Monty's `state_dict` save/restore) is the correct way to move taught
+     * knowledge between instances instead.
+     */
+    private val memory = GraphMemory()
     private val nodeBuffer = mutableListOf<GraphNode>()
     private val checkedLocations = mutableSetOf<Location>()
     private var lastCompletedNodes: List<GraphNode>? = null

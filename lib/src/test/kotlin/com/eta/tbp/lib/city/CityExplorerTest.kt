@@ -2,7 +2,7 @@ package com.eta.tbp.lib.city
 
 import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.RecognitionResult
-import com.eta.tbp.lib.memory.GraphMemory
+import com.eta.tbp.lib.memory.GraphObjectModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,11 +20,11 @@ import org.junit.Test
 class CityExplorerTest {
     private fun newExplorer(
         cityMap: CityMap,
-        memory: GraphMemory = GraphMemory(),
+        seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): CityExplorer {
         val sensor = CitySensorModule(sensorId = "city-sensor", cityMap = cityMap)
-        val lm = EvidenceGraphLM(lmId = "city-lm", memory = memory)
-        return CityExplorer(sensor, lm)
+        val lm = EvidenceGraphLM(lmId = "city-lm")
+        return CityExplorer(sensor, lm).apply { loadState(seedState) }
     }
 
     private fun explore(
@@ -81,15 +81,14 @@ class CityExplorerTest {
 
     @Test
     fun `after teaching, the same city explored from a different starting cell and visit order is Recognized`() {
-        val memory = GraphMemory()
-        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)), memory)
+        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)))
         explore(teachExplorer, springfieldCells(MapLocation(1, 1)))
         teachExplorer.teach("Springfield")
 
         // Same city, but the explorer arrives at a different cell (they have
         // no way to know their true coordinate in the taught map) and visits
         // the same three landmarks in a different order.
-        val recognizeExplorer = newExplorer(springfield(origin = MapLocation(4, 5)), memory)
+        val recognizeExplorer = newExplorer(springfield(origin = MapLocation(4, 5)), teachExplorer.state())
         val result = explore(recognizeExplorer, springfieldCells(MapLocation(4, 5)).reversed())
 
         assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
@@ -98,32 +97,34 @@ class CityExplorerTest {
 
     @Test
     fun `a genuinely different city layout is Unknown, and can be taught as a new city`() {
-        val memory = GraphMemory()
-        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)), memory)
+        val teachExplorer = newExplorer(springfield(origin = MapLocation(1, 1)))
         explore(teachExplorer, springfieldCells(MapLocation(1, 1)))
         teachExplorer.teach("Springfield")
 
-        val capitalCityExplorer = newExplorer(capitalCity(origin = MapLocation(2, 4)), memory)
+        val capitalCityExplorer = newExplorer(capitalCity(origin = MapLocation(2, 4)), teachExplorer.state())
         val unknownResult = explore(capitalCityExplorer, capitalCityCells(MapLocation(2, 4)))
         assertEquals(RecognitionResult.Unknown, unknownResult)
 
         capitalCityExplorer.teach("Capital City")
-        assertEquals(setOf("Springfield", "Capital City"), memory.allLabels())
+        assertEquals(setOf("Springfield", "Capital City"), capitalCityExplorer.state().keys)
     }
 
     @Test
     fun `two cities that agree on every visited cell but one stay Ambiguous until that cell is visited`() {
-        val memory = GraphMemory()
-        newExplorer(springfield(origin = MapLocation(1, 1)), memory)
-            .also { explore(it, springfieldCells(MapLocation(1, 1))) }
-            .teach("Springfield")
-        newExplorer(shelbyville(origin = MapLocation(1, 1)), memory)
-            .also { explore(it, shelbyvilleCells(MapLocation(1, 1))) }
-            .teach("Shelbyville")
+        val afterSpringfield =
+            newExplorer(springfield(origin = MapLocation(1, 1)))
+                .also { explore(it, springfieldCells(MapLocation(1, 1))) }
+                .also { it.teach("Springfield") }
+                .state()
+        val afterBoth =
+            newExplorer(shelbyville(origin = MapLocation(1, 1)), afterSpringfield)
+                .also { explore(it, shelbyvilleCells(MapLocation(1, 1))) }
+                .also { it.teach("Shelbyville") }
+                .state()
 
         // Visiting only the post office and park -- identical in both taught
         // cities -- doesn't distinguish them: keep investigating.
-        val explorer = newExplorer(springfield(origin = MapLocation(6, 1)), memory)
+        val explorer = newExplorer(springfield(origin = MapLocation(6, 1)), afterBoth)
         explorer.beginExploration()
         explorer.visit(MapLocation(6, 1))
         explorer.visit(MapLocation(8, 2))
