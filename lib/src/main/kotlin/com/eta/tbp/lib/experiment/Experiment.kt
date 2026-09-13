@@ -30,8 +30,8 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  *
  * - [RecognitionResult.Recognized] (unique match) → stop, report it.
  * - [RecognitionResult.Ambiguous] (multiple known objects still fit) → ask
- *   the LM (via [Explorer.suggestNextLocation], its own embedded Goal State
- *   Generator — see [EvidenceGraphLM.suggestNextLocation]) where visiting
+ *   the LM (via [Explorer.proposeGoal], its own embedded Goal State
+ *   Generator — see [EvidenceGraphLM.proposeGoal]) where visiting
  *   next would best tell the tied candidates apart, rather than picking
  *   blindly. Real Monty does the same once its own hypotheses narrow.
  * - [RecognitionResult.Unknown], or no suggestion available → nothing to

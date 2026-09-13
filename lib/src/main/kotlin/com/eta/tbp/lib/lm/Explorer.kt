@@ -1,5 +1,6 @@
 package com.eta.tbp.lib.lm
 
+import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
@@ -39,21 +40,22 @@ import com.eta.tbp.lib.sensor.SensorModule
  *
  * [explore] additionally owns the *motor system* role real Monty's `Monty`
  * constructor takes a `motor_system` for: deciding, at each step, where to
- * go next. Real Monty's own `NaiveScanPolicy` never receives (and the
- * [SensorModule] interface never exposes) "everywhere the sensor could go"
- * — it applies a small fixed relative step, over and over, capped by a step
- * count (`check_reached_max_matching_steps`), and defers to a goal state
- * once the LM has one to offer. [explore] mirrors that shape rather than
- * real Monty's actual `MotorSystem`/`MotorPolicySelector` machinery
- * (`motor_system.py`, built for continuous 3D agent motion — far more than
- * this domain needs): prefer [suggestNextLocation]'s goal-directed pick;
- * otherwise ask [randomLocation] for a candidate, retrying if it's one
- * [visit] already used this episode; stop after [maxSteps] regardless.
- * That's a deliberate, stated exception, the same category
- * IMPLEMENTATION_PLAN.md's own compatibility table already makes for the
- * touch tier ("Motor system + simulator driving a sensor" → "Not
- * ported — the human *is* the motor system"); here nothing plays that role
- * for an *automated* explorer, so [explore] has to.
+ * go next, via a [MotorSystem] it builds for the episode. Real Monty's own
+ * `NaiveScanPolicy` never receives (and the [SensorModule] interface never
+ * exposes) "everywhere the sensor could go" — it applies a small fixed
+ * relative step, over and over, capped by a step count
+ * (`check_reached_max_matching_steps`), and defers to a goal state once the
+ * LM has one to offer. [MotorSystem] mirrors that same "prefer the goal,
+ * else fall back" shape rather than real Monty's actual
+ * `MotorSystem`/`MotorPolicySelector` machinery (`motor_system.py`, built
+ * for continuous 3D agent motion — far more than this domain needs): prefer
+ * [proposeGoal]'s goal-directed pick; otherwise ask [randomLocation] for a
+ * candidate, retrying if it's one [visit] already used this episode; stop
+ * after [maxSteps] regardless. That's a deliberate, stated exception, the
+ * same category IMPLEMENTATION_PLAN.md's own compatibility table already
+ * makes for the touch tier ("Motor system + simulator driving a sensor" →
+ * "Not ported — the human *is* the motor system"); here nothing plays that
+ * role for an *automated* explorer, so [explore] has to.
  *
  * [logger] logs only what's unique to this layer — the move itself and the
  * episode's start/end — not [sensorModule]'s or [lm]'s own events, which
@@ -109,30 +111,32 @@ class Explorer(
     fun currentNodes(): List<GraphNode> = lm.currentNodes()
 
     /**
-     * Where [lm] suggests looking next to tell its currently tied
-     * hypotheses apart — see [EvidenceGraphLM.suggestNextLocation]. Null
-     * under the same conditions [EvidenceGraphLM.suggestNextLocation] is —
-     * [explore] falls back to its own untried-candidate pick in that case.
+     * The [CmpGoal] [lm] proposes to tell its currently tied hypotheses
+     * apart — see [EvidenceGraphLM.proposeGoal]. Null under the same
+     * conditions [EvidenceGraphLM.proposeGoal] is — [explore]'s own
+     * [MotorSystem] falls back to its untried-candidate pick in that case.
      */
-    fun suggestNextLocation(): Location? = lm.suggestNextLocation()
+    fun proposeGoal(): CmpGoal? = lm.proposeGoal()
 
     /**
      * Runs one full episode, for at most [maxSteps] visits — the motor
-     * system this class owns (see class doc). At each step: prefer
-     * [suggestNextLocation]'s goal-directed pick; if it's null or already
-     * visited this episode, ask [randomLocation] instead, retrying it for
-     * as long as it keeps returning an already-visited location. Stops
-     * early on [RecognitionResult.Recognized] unless [everything] is set —
-     * teaching a second object that shares landmarks with an already-taught
-     * one needs every candidate observed, not just however many it took to
-     * (mis)match the first thing already known (see [EvidenceGraphLM.teach]'s
-     * own doc for why teaching needs the complete sequence).
+     * system this class owns (see class doc), delegated for the episode to
+     * a fresh [MotorSystem] built from [randomLocation]. At each step:
+     * [MotorSystem.nextLocation] prefers [proposeGoal]'s goal-directed pick;
+     * if it's null or already visited this episode, it asks [randomLocation]
+     * instead, retrying it for as long as it keeps returning an
+     * already-visited location. Stops early on [RecognitionResult.Recognized]
+     * unless [everything] is set — teaching a second object that shares
+     * landmarks with an already-taught one needs every candidate observed,
+     * not just however many it took to (mis)match the first thing already
+     * known (see [EvidenceGraphLM.teach]'s own doc for why teaching needs
+     * the complete sequence).
      *
      * [randomLocation] must not be able to produce more than [maxSteps]
      * distinct locations — once every location it can produce has been
-     * visited, the already-visited retry never terminates. A caller whose
-     * domain is a bounded space (e.g. a city's NxN grid) should size
-     * [maxSteps] to that space's own extent, the same way real Monty's
+     * visited, [MotorSystem]'s already-visited retry never terminates. A
+     * caller whose domain is a bounded space (e.g. a city's NxN grid) should
+     * size [maxSteps] to that space's own extent, the same way real Monty's
      * `NaiveScanPolicy` is bounded by a caller-configured step count, not by
      * anything it discovers about the environment itself.
      */
@@ -142,13 +146,14 @@ class Explorer(
         everything: Boolean = false,
     ): ExplorationOutcome {
         beginExploration()
+        val motorSystem = MotorSystem(randomLocation)
         var locationsVisited = 0
         while (locationsVisited < maxSteps) {
             val visited = currentNodes().map { it.location }.toSet()
-            val suggestion = suggestNextLocation()?.takeIf { it !in visited }
-            val next = suggestion ?: generateSequence(randomLocation).first { it !in visited }
+            val goals = listOfNotNull(proposeGoal())
+            val next = motorSystem.nextLocation(goals, visited)
 
-            logger.debug(TAG) { "step ${locationsVisited + 1}: visiting $next (${if (suggestion != null) "goal-suggested" else "random"})" }
+            logger.debug(TAG) { "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "random"})" }
             visit(next)
             locationsVisited++
 

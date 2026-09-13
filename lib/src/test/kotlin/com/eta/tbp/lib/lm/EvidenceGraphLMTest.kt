@@ -137,7 +137,7 @@ class EvidenceGraphLMTest {
     }
 
     @Test
-    fun `suggestNextLocation proposes where the tied hypotheses disagree, using this LM's own memory and observations`() {
+    fun `proposeGoal proposes where the tied hypotheses disagree, using this LM's own memory and observations`() {
         val evidenceGraphLM = newLm()
 
         // "L" and "L2" agree on their first two nodes but differ in the third.
@@ -151,18 +151,20 @@ class EvidenceGraphLMTest {
         evidenceGraphLM.matchingStep(listOf(message(50f, 51f, "line")))
         assertTrue(evidenceGraphLM.recognitionResult() is RecognitionResult.Ambiguous)
 
-        val suggestion = evidenceGraphLM.suggestNextLocation()
+        val goal = evidenceGraphLM.proposeGoal()
 
         assertTrue(
-            "expected one candidate's own predicted arc location but was $suggestion",
-            suggestion == FloatLocation(51f, 51f) || suggestion == FloatLocation(51f, 49f),
+            "expected one candidate's own predicted arc location but was ${goal?.location}",
+            goal?.location == FloatLocation(51f, 51f) || goal?.location == FloatLocation(51f, 49f),
         )
+        assertEquals(SenderType.GSG, goal?.senderType)
+        assertTrue(goal?.passMessage == true)
     }
 
     @Test
-    fun `suggestNextLocation is null when the result isn't Ambiguous`() {
+    fun `proposeGoal is null when the result isn't Ambiguous`() {
         val evidenceGraphLM = newLm()
-        assertEquals(null, evidenceGraphLM.suggestNextLocation())
+        assertEquals(null, evidenceGraphLM.proposeGoal())
     }
 
     @Test

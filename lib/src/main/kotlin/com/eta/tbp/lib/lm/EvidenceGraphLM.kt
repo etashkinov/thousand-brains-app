@@ -1,5 +1,6 @@
 package com.eta.tbp.lib.lm
 
+import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.cmp.CmpMessage
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.log.Logger
@@ -86,14 +87,16 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * [Experiment.evaluate]) gets the stricter
  * behavior.
  *
- * [suggestNextLocation] is this class's own embedded Goal State Generator
- * (mirrors real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s
- * doc): a third output channel alongside [getOutput]/[sendOutVote], not
- * folded into either, for whatever explores on this LM's behalf (e.g.
- * [Experiment]) to consult instead of choosing
- * blindly. Entirely a function of this LM's own state — [memory] and what
- * it's already observed/checked — never anything about the domain under
- * exploration itself, which is exactly what keeps it generic over any
+ * [proposeGoal] is this class's own embedded Goal State Generator (mirrors
+ * real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s doc): a
+ * third output channel alongside [getOutput]/[sendOutVote], not folded into
+ * either, for whatever explores on this LM's behalf (e.g. [Experiment]) to
+ * consult instead of choosing blindly. Its result travels as a [CmpGoal] —
+ * real Monty's own `propose_goals()` returns `Goal` CMP messages, not a bare
+ * location, and [MotorSystem] is what actually consumes it. Entirely a
+ * function of this LM's own state — [memory] and what it's already
+ * observed/checked — never anything about the domain under exploration
+ * itself, which is exactly what keeps it generic over any
  * [Location]/[Feature] pair rather than tied to one caller's domain.
  *
  * [logger] defaults to [Logger.None] (silent) so no existing caller/test is
@@ -198,25 +201,37 @@ class EvidenceGraphLM(
     fun currentNodes(): List<GraphNode> = nodeBuffer.toList()
 
     /**
-     * Where to look next to tell the currently tied hypotheses apart — see
-     * [suggestGoalLocation]'s own doc, and real Monty's `propose_goals()`
-     * pipeline this mirrors: a separate output channel from [getOutput],
-     * not folded into its `CmpMessage` (real Monty keeps movement guidance
-     * out of `get_output()`/`send_out_vote()` too). Null whenever there's
-     * nothing to disambiguate — not [RecognitionResult.Ambiguous] yet, or
-     * nothing left unchecked to suggest — in which case the caller should
+     * A [CmpGoal] proposing where to look next to tell the currently tied
+     * hypotheses apart — see [suggestGoalLocation]'s own doc for the
+     * underlying geometry, and real Monty's `propose_goals()` pipeline this
+     * mirrors: a separate output channel from [getOutput], not folded into
+     * its `CmpMessage` (real Monty keeps movement guidance out of
+     * `get_output()`/`send_out_vote()` too), and sent as [SenderType.GSG]
+     * rather than this LM's own [SenderType.LM] — the same
+     * `sender_type="GSG"` real Monty's `EvidenceGoalGenerator` uses when it
+     * builds a `Goal` on this LM's behalf. Null whenever there's nothing to
+     * disambiguate — not [RecognitionResult.Ambiguous] yet, or nothing left
+     * unchecked to suggest — in which case the caller ([MotorSystem]) should
      * fall back to its own default exploration policy (e.g. a random
      * unchecked location), the same way real Monty falls back to a naive
      * policy when goal-driven actions are off.
      */
-    fun suggestNextLocation(): Location? {
+    fun proposeGoal(): CmpGoal? {
         val result = recognitionResult()
         if (result !is RecognitionResult.Ambiguous) return null
-        val suggestion = suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations)
-        if (suggestion != null) {
-            logger.debug(TAG) { "[$lmId] suggesting $suggestion to disambiguate ${result.labels}" }
-        }
-        return suggestion
+        val location = suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations) ?: return null
+        logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
+        return CmpGoal(
+            location = location,
+            feature = null,
+            confidence = 1f,
+            passMessage = true,
+            senderId = lmId,
+            senderType = SenderType.GSG,
+            processFeaturesInLm = true,
+            goalTolerances = null,
+            info = null,
+        )
     }
 
     override fun preEpisode() {

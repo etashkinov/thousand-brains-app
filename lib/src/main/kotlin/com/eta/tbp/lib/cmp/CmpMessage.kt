@@ -3,8 +3,15 @@ package com.eta.tbp.lib.cmp
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.Location
 
-/** Mirrors Monty CMP's sender kinds: a Sensor Module or a Learning Module. */
-enum class SenderType { SM, LM }
+/**
+ * Mirrors Monty CMP's sender kinds: a Sensor Module or a Learning Module —
+ * plus [GSG] (Goal State Generator), the only sender kind a [CmpGoal] may
+ * carry (mirrors `cmp.Goal._set_allowable_sender_types` returning `("GSG",
+ * "SM")`, not plain `Message`'s own `("SM", "LM")`). An LM's embedded goal
+ * generator (e.g. [com.eta.tbp.lib.lm.EvidenceGraphLM.proposeGoal]) sends
+ * as [GSG], never [LM].
+ */
+enum class SenderType { SM, LM, GSG }
 
 /**
  * Mirrors `tbp.monty.cmp.Message` — the single message format exchanged
@@ -29,8 +36,18 @@ open class CmpMessage(
 }
 
 /**
- * Mirrors `tbp.monty.cmp.Goal` — used by Phase-8 hypothesis-directed glide
- * branching. Present as a class shape but unused until then.
+ * Mirrors `tbp.monty.cmp.Goal` — what a Goal State Generator sends to the
+ * motor system (real Monty: `MotorSystem.__call__`'s `goals: Sequence[Goal]`
+ * param; this app: [com.eta.tbp.lib.lm.MotorSystem.nextLocation]'s `goals`
+ * param). Live today for the city tier — [com.eta.tbp.lib.lm.EvidenceGraphLM.proposeGoal]
+ * is the one producer, [com.eta.tbp.lib.lm.Explorer]'s embedded
+ * [com.eta.tbp.lib.lm.MotorSystem] the one consumer — since that tier
+ * already has an automated single-LM-to-motor loop real Monty exercises
+ * with no voting required. The touch/character tier has no motor system at
+ * all (a human draws by hand), so it has no producer or consumer for this
+ * class yet; *that* tier's use of [CmpGoal] — voting between sibling LMs'
+ * goals during Phase-8 hypothesis-directed glide branching — is still
+ * unbuilt.
  */
 class CmpGoal(
     location: Location?,

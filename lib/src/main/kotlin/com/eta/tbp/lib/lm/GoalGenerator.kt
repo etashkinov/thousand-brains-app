@@ -22,7 +22,7 @@ import com.eta.tbp.lib.memory.Location
  * generic over whatever [Location]/[Feature][com.eta.tbp.lib.memory.Feature]
  * pair the caller's domain uses (a city's discrete [com.eta.tbp.lib.city.MapLocation]
  * or a stroke's continuous [com.eta.tbp.lib.sensor.FloatLocation] alike), the
- * same way [GraphMatcher] itself is. [EvidenceGraphLM.suggestNextLocation]
+ * same way [GraphMatcher] itself is. [EvidenceGraphLM.proposeGoal]
  * is the only caller today, but this stays a free function (same idiom as
  * [possibleMatches]/[recognitionResult] below) so it's independently
  * testable without an [EvidenceGraphLM] instance.
