@@ -2,7 +2,7 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.anyNear
+import com.eta.tbp.lib.memory.PositionTolerance
 
 /**
  * Mirrors real Monty's `MotorSystem`/`RuntimeMotorSystem`
@@ -33,17 +33,17 @@ import com.eta.tbp.lib.memory.anyNear
  * `motor_only_step` telemetry state this app's one-shot "pick a location"
  * decision has no equivalent of.
  *
- * [positionTolerance] (default `0f`, exact equality only) is constructor
+ * [positionTolerance] (default [PositionTolerance.EXACT]) is constructor
  * config, same as [randomLocation] — not a per-[nextLocation]-call
  * argument, so every step within an episode necessarily agrees on what
  * "already visited" means. [Explorer] constructs this with its own
  * [EvidenceGraphLM.positionTolerance] rather than a value of its own — see
- * that property's doc for why there's exactly one configured value, not a
- * copy per class.
+ * that property's doc, and [PositionTolerance]'s own, for why there's
+ * exactly one configured value, not a copy per class.
  */
 class MotorSystem(
     private val randomLocation: () -> Location,
-    private val positionTolerance: Float = 0f,
+    private val positionTolerance: PositionTolerance = PositionTolerance.EXACT,
 ) {
     /**
      * The next [Location] to visit: the first usable goal among [goals] —
@@ -56,7 +56,7 @@ class MotorSystem(
         goals: List<CmpGoal>,
         visited: Set<Location>,
     ): Location {
-        val goalLocation = goals.firstOrNull { it.passMessage }?.location?.takeIf { !visited.anyNear(it, positionTolerance) }
-        return goalLocation ?: generateSequence(randomLocation).first { !visited.anyNear(it, positionTolerance) }
+        val goalLocation = goals.firstOrNull { it.passMessage }?.location?.takeIf { !positionTolerance.anyNear(visited, it) }
+        return goalLocation ?: generateSequence(randomLocation).first { !positionTolerance.anyNear(visited, it) }
     }
 }

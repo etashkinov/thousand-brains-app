@@ -2,6 +2,7 @@ package com.eta.tbp.lib.sensor
 
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.memory.PositionTolerance
 
 /**
  * Stands in for real Monty's `EmbodiedEnvironment`/dataset — the thing that
@@ -32,9 +33,11 @@ interface Environment {
      * shared constant (e.g. [com.eta.tbp.lib.memory.GraphMatcher]'s own,
      * deliberately coarser position-error tolerance): it must stay well
      * under this environment's own minimum distinct-location spacing, or
-     * genuinely different locations start collapsing into each other.
+     * genuinely different locations start collapsing into each other. See
+     * [PositionTolerance]'s own doc for why this lives here rather than on
+     * [Location] itself.
      */
-    val positionTolerance: Float
+    val positionTolerance: PositionTolerance
 
     /** A location [featureAt] can answer for — the one thing [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system needs when it has no goal-directed suggestion to act on instead. */
     fun randomLocation(): Location

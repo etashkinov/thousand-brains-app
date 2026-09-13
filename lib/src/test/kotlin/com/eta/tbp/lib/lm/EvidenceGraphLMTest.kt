@@ -77,23 +77,6 @@ class EvidenceGraphLMTest {
     }
 
     @Test
-    fun `currentNodes reflects the buffered episode and clears on preEpisode`() {
-        val evidenceGraphLM = newLm()
-        assertTrue(evidenceGraphLM.currentNodes().isEmpty())
-
-        drive(evidenceGraphLM, lShape())
-
-        val nodes = evidenceGraphLM.currentNodes()
-        assertTrue(
-            "expected two line-labeled nodes then an arc but got ${nodes.map { it.feature }}",
-            nodes.size == 3 && nodes.take(2).all { it.feature.label == "line" },
-        )
-
-        evidenceGraphLM.preEpisode()
-        assertTrue(evidenceGraphLM.currentNodes().isEmpty())
-    }
-
-    @Test
     fun `possibleMatches and recognitionResult are Unknown before anything is taught or drawn`() {
         val evidenceGraphLM = newLm()
 

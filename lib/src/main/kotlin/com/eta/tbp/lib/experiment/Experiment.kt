@@ -99,7 +99,7 @@ class Experiment(
     private val logger: Logger = Logger.Console,
 ) {
     private val sensor = EnvironmentSensorModule(sensorId = "$lmId-sensor", environment = environment, logger = logger)
-    private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = 0.3f, logger = logger)
+    private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = environment.positionTolerance, logger = logger)
     private val explorer = Explorer(sensor, lm, logger = logger)
 
     sealed class Outcome {

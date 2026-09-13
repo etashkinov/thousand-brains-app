@@ -5,6 +5,7 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.GridEnvironment
@@ -34,7 +35,7 @@ class CityExplorerTest {
     private fun newExplorer(
         cityMap: GridEnvironment,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
-        positionTolerance: Float = 0f,
+        positionTolerance: PositionTolerance = PositionTolerance.EXACT,
     ): Explorer {
         val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap)
         val lm = EvidenceGraphLM(lmId = "city-lm", positionTolerance = positionTolerance)

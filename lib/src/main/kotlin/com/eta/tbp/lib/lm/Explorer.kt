@@ -2,7 +2,6 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.log.Logger
-import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.SensorModule
@@ -107,9 +106,6 @@ class Explorer(
      */
     fun currentResult(): RecognitionResult = lm.recognitionResult()
 
-    /** The locations observed so far this exploration, in visit order — direct introspection, same spirit as [EvidenceGraphLM.currentNodes]. */
-    fun currentNodes(): List<GraphNode> = lm.currentNodes()
-
     /**
      * The [CmpGoal] [lm] proposes to tell its currently tied hypotheses
      * apart — see [EvidenceGraphLM.proposeGoal]. Null under the same
@@ -147,6 +143,14 @@ class Explorer(
      * tolerance can only shrink how many of them count as distinct (each
      * visited location also excludes its close neighbors), never grow the
      * set [randomLocation] draws from.
+     *
+     * "Already visited," for [MotorSystem]'s purposes, is
+     * [EvidenceGraphLM.checkedLocations] — every location a message arrived
+     * for, not just the feature-bearing subset [EvidenceGraphLM.currentNodes]
+§     * exposes (see that method's own doc). A featureless probe still
+     * shouldn't be revisited; using the narrower set here would let
+     * [MotorSystem] send the explorer back to a cell it already knows is
+     * empty.
      */
     fun explore(
         randomLocation: () -> Location,
@@ -157,11 +161,12 @@ class Explorer(
         val motorSystem = MotorSystem(randomLocation, lm.positionTolerance)
         var locationsVisited = 0
         while (locationsVisited < maxSteps) {
-            val visited = currentNodes().map { it.location }.toSet()
             val goals = listOfNotNull(proposeGoal())
-            val next = motorSystem.nextLocation(goals, visited)
+            val next = motorSystem.nextLocation(goals, lm.checkedLocations())
 
-            logger.debug(TAG) { "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "random"})" }
+            logger.debug(TAG) {
+                "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "random"})"
+            }
             visit(next)
             locationsVisited++
 

@@ -3,7 +3,7 @@ package com.eta.tbp.lib.sensor
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.LabelFeature
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.isNear
+import com.eta.tbp.lib.memory.PositionTolerance
 import kotlin.random.Random
 
 /**
@@ -23,7 +23,7 @@ import kotlin.random.Random
 class GridEnvironment(
     override val size: Int,
     val cells: Map<Location, Feature>,
-    override val positionTolerance: Float = 0.3f,
+    override val positionTolerance: PositionTolerance = PositionTolerance(0.3f),
     private val random: Random = Random.Default,
 ) : Environment {
     override fun randomLocation() = FloatLocation(random.nextInt(size).toFloat(), random.nextInt(size).toFloat())
@@ -31,7 +31,7 @@ class GridEnvironment(
     /** The nearest cell within [positionTolerance] of [location], or `null` if none qualifies. */
     override fun featureAt(location: Location): Feature? =
         cells.entries
-            .filter { (cellLocation, _) -> cellLocation.isNear(location, positionTolerance) }
+            .filter { (cellLocation, _) -> positionTolerance.isNear(cellLocation, location) }
             .minByOrNull { (cellLocation, _) -> cellLocation.displacement(location).magnitude() }
             ?.value
 
@@ -40,7 +40,7 @@ class GridEnvironment(
         fun of(
             size: Int,
             vararg features: Pair<Location, String>,
-            positionTolerance: Float = 0.3f,
+            positionTolerance: PositionTolerance = PositionTolerance(0.3f),
             random: Random = Random.Default,
         ): GridEnvironment =
             GridEnvironment(

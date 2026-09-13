@@ -10,6 +10,7 @@ import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.memory.edgeChainOf
 
 /**
@@ -106,7 +107,7 @@ import com.eta.tbp.lib.memory.edgeChainOf
  *
  * [positionTolerance] is this LM's one configured answer to "how close is
  * close enough to be the same place" — set once at construction (default
- * `0f`, exact equality only) rather than threaded through every call that
+ * [PositionTolerance.EXACT]) rather than threaded through every call that
  * needs it, the same way real Monty's `EvidenceGoalGenerator.__init__`
  * takes `goal_tolerances` as constructor config, not a `propose_goals()`
  * argument (`goal_generation.py`). [proposeGoal] uses it directly, and
@@ -115,12 +116,13 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * `visited`-location bookkeeping — one source of truth instead of every
  * caller along the chain repeating (and risking disagreeing on) the same
  * value. A caller wired to a real [com.eta.tbp.lib.sensor.Environment]
- * should pass that environment's own `positionTolerance` here (see its own
- * doc for why the value itself is domain-scaled, not a shared constant).
+ * should pass that environment's own `positionTolerance` here (see
+ * [PositionTolerance]'s own doc for why the value itself is domain-scaled,
+ * not a shared constant, and why it isn't a property of [Location] itself).
  */
 class EvidenceGraphLM(
     override val lmId: String,
-    val positionTolerance: Float = 0f,
+    val positionTolerance: PositionTolerance = PositionTolerance.EXACT,
     private val logger: Logger = Logger.Console,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     /**
@@ -207,13 +209,15 @@ class EvidenceGraphLM(
     }
 
     /**
-     * The primitives buffered so far this episode — direct introspection
-     * for debugging/inspection (e.g. an LM-state overlay), same spirit as
-     * [evidenceSnapshot]: a plain query a caller makes, not something a CMP
-     * message carries. Empty before any stroke completes or right after
-     * [preEpisode].
+     * Every location a message has arrived for this episode, whether or not
+     * it carried a feature ([nodeBuffer] only ever holds the
+     * feature-bearing subset — see [matchingStep]'s own `passMessage` gate).
+     * This is the authoritative "already probed" record: a location with no
+     * feature is still a location an explorer shouldn't waste a future step
+     * revisiting, so [Explorer] reads this directly for its own
+     * [MotorSystem]'s `visited` check
      */
-    fun currentNodes(): List<GraphNode> = nodeBuffer.toList()
+    fun checkedLocations(): Set<Location> = checkedLocations.toSet()
 
     /**
      * A [CmpGoal] proposing where to look next to tell the currently tied

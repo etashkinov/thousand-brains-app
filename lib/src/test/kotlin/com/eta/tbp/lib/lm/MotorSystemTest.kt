@@ -3,6 +3,7 @@ package com.eta.tbp.lib.lm
 import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.cmp.SenderType
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.sensor.FloatLocation
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -64,7 +65,7 @@ class MotorSystemTest {
 
     @Test
     fun `with a nonzero positionTolerance, a goal near an already-visited location is treated as visited too`() {
-        val motorSystem = MotorSystem(randomLocation = { FloatLocation(9f, 9f) }, positionTolerance = 0.3f)
+        val motorSystem = MotorSystem(randomLocation = { FloatLocation(9f, 9f) }, positionTolerance = PositionTolerance(0.3f))
         val next =
             motorSystem.nextLocation(
                 goals = listOf(goal(FloatLocation(1.1f, 1f))),
