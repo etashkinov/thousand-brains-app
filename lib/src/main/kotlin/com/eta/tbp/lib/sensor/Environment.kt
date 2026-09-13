@@ -22,9 +22,29 @@ import com.eta.tbp.lib.memory.Location
 interface Environment {
     val size: Int
 
+    /**
+     * How close two locations must be to count as the same addressable
+     * place — used both by [featureAt]'s nearest-cell lookup and, threaded
+     * through [Explorer][com.eta.tbp.lib.lm.Explorer]/
+     * [com.eta.tbp.lib.lm.MotorSystem]/[com.eta.tbp.lib.lm.EvidenceGraphLM],
+     * to stop an automated explorer from treating a jittered re-observation
+     * of somewhere already visited as new. Domain-owned rather than a
+     * shared constant (e.g. [com.eta.tbp.lib.memory.GraphMatcher]'s own,
+     * deliberately coarser position-error tolerance): it must stay well
+     * under this environment's own minimum distinct-location spacing, or
+     * genuinely different locations start collapsing into each other.
+     */
+    val positionTolerance: Float
+
     /** A location [featureAt] can answer for — the one thing [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system needs when it has no goal-directed suggestion to act on instead. */
     fun randomLocation(): Location
 
-    /** Whatever's at [location], or `null` if nothing is — never throws for an out-of-range or unvisited [location], the same way a real sensor reports "nothing here" rather than failing. */
+    /**
+     * Whatever's at [location] (the nearest known cell within
+     * [positionTolerance], not necessarily an exact-coordinate match), or
+     * `null` if nothing qualifies — never throws for an out-of-range or
+     * unvisited [location], the same way a real sensor reports "nothing
+     * here" rather than failing.
+     */
     fun featureAt(location: Location): Feature?
 }

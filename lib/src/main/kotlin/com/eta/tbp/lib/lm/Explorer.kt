@@ -121,16 +121,18 @@ class Explorer(
     /**
      * Runs one full episode, for at most [maxSteps] visits — the motor
      * system this class owns (see class doc), delegated for the episode to
-     * a fresh [MotorSystem] built from [randomLocation]. At each step:
-     * [MotorSystem.nextLocation] prefers [proposeGoal]'s goal-directed pick;
-     * if it's null or already visited this episode, it asks [randomLocation]
-     * instead, retrying it for as long as it keeps returning an
-     * already-visited location. Stops early on [RecognitionResult.Recognized]
-     * unless [everything] is set — teaching a second object that shares
-     * landmarks with an already-taught one needs every candidate observed,
-     * not just however many it took to (mis)match the first thing already
-     * known (see [EvidenceGraphLM.teach]'s own doc for why teaching needs
-     * the complete sequence).
+     * a fresh [MotorSystem] built from [randomLocation] and [lm]'s own
+     * configured [EvidenceGraphLM.positionTolerance] (see that property's
+     * doc for why this class reads it from [lm] rather than taking its own
+     * copy as a parameter here). At each step: [MotorSystem.nextLocation]
+     * prefers [proposeGoal]'s goal-directed pick; if it's null or already
+     * visited this episode, it asks [randomLocation] instead, retrying it
+     * for as long as it keeps returning an already-visited location. Stops
+     * early on [RecognitionResult.Recognized] unless [everything] is set —
+     * teaching a second object that shares landmarks with an already-taught
+     * one needs every candidate observed, not just however many it took to
+     * (mis)match the first thing already known (see [EvidenceGraphLM.teach]'s
+     * own doc for why teaching needs the complete sequence).
      *
      * [randomLocation] must not be able to produce more than [maxSteps]
      * distinct locations — once every location it can produce has been
@@ -138,7 +140,13 @@ class Explorer(
      * caller whose domain is a bounded space (e.g. a city's NxN grid) should
      * size [maxSteps] to that space's own extent, the same way real Monty's
      * `NaiveScanPolicy` is bounded by a caller-configured step count, not by
-     * anything it discovers about the environment itself.
+     * anything it discovers about the environment itself. That bound holds
+     * regardless of [lm]'s [EvidenceGraphLM.positionTolerance]: a domain like
+     * [GridEnvironment][com.eta.tbp.lib.sensor.GridEnvironment] still only
+     * ever samples the same finite set of distinct locations — a nonzero
+     * tolerance can only shrink how many of them count as distinct (each
+     * visited location also excludes its close neighbors), never grow the
+     * set [randomLocation] draws from.
      */
     fun explore(
         randomLocation: () -> Location,
@@ -146,7 +154,7 @@ class Explorer(
         everything: Boolean = false,
     ): ExplorationOutcome {
         beginExploration()
-        val motorSystem = MotorSystem(randomLocation)
+        val motorSystem = MotorSystem(randomLocation, lm.positionTolerance)
         var locationsVisited = 0
         while (locationsVisited < maxSteps) {
             val visited = currentNodes().map { it.location }.toSet()

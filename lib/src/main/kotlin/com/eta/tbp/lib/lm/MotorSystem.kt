@@ -2,6 +2,7 @@ package com.eta.tbp.lib.lm
 
 import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.memory.anyNear
 
 /**
  * Mirrors real Monty's `MotorSystem`/`RuntimeMotorSystem`
@@ -31,21 +32,31 @@ import com.eta.tbp.lib.memory.Location
  * object only because it *also* carries `_action_sequence`/
  * `motor_only_step` telemetry state this app's one-shot "pick a location"
  * decision has no equivalent of.
+ *
+ * [positionTolerance] (default `0f`, exact equality only) is constructor
+ * config, same as [randomLocation] — not a per-[nextLocation]-call
+ * argument, so every step within an episode necessarily agrees on what
+ * "already visited" means. [Explorer] constructs this with its own
+ * [EvidenceGraphLM.positionTolerance] rather than a value of its own — see
+ * that property's doc for why there's exactly one configured value, not a
+ * copy per class.
  */
 class MotorSystem(
     private val randomLocation: () -> Location,
+    private val positionTolerance: Float = 0f,
 ) {
     /**
      * The next [Location] to visit: the first usable goal among [goals] —
-     * [CmpGoal.passMessage] set, and not already in [visited] — or, absent
-     * one, [randomLocation], retried for as long as it keeps landing on an
+     * [CmpGoal.passMessage] set, and not within [positionTolerance] of
+     * anything in [visited] — or, absent one, [randomLocation], retried for
+     * as long as it keeps landing within [positionTolerance] of an
      * already-[visited] location.
      */
     fun nextLocation(
         goals: List<CmpGoal>,
         visited: Set<Location>,
     ): Location {
-        val goalLocation = goals.firstOrNull { it.passMessage }?.location?.takeIf { it !in visited }
-        return goalLocation ?: generateSequence(randomLocation).first { it !in visited }
+        val goalLocation = goals.firstOrNull { it.passMessage }?.location?.takeIf { !visited.anyNear(it, positionTolerance) }
+        return goalLocation ?: generateSequence(randomLocation).first { !visited.anyNear(it, positionTolerance) }
     }
 }

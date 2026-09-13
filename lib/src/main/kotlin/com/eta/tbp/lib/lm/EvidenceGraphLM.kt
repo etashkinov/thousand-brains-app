@@ -103,9 +103,24 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * affected by adding it — pass [Logger.Console], or an `app`-side
  * implementation, to see this class's own events (nodes matched, episode
  * boundaries, teach outcomes, goal suggestions).
+ *
+ * [positionTolerance] is this LM's one configured answer to "how close is
+ * close enough to be the same place" — set once at construction (default
+ * `0f`, exact equality only) rather than threaded through every call that
+ * needs it, the same way real Monty's `EvidenceGoalGenerator.__init__`
+ * takes `goal_tolerances` as constructor config, not a `propose_goals()`
+ * argument (`goal_generation.py`). [proposeGoal] uses it directly, and
+ * [Explorer] reads this same property (rather than holding its own copy)
+ * when it needs the identical notion of "same place" for its own
+ * `visited`-location bookkeeping — one source of truth instead of every
+ * caller along the chain repeating (and risking disagreeing on) the same
+ * value. A caller wired to a real [com.eta.tbp.lib.sensor.Environment]
+ * should pass that environment's own `positionTolerance` here (see its own
+ * doc for why the value itself is domain-scaled, not a shared constant).
  */
 class EvidenceGraphLM(
     override val lmId: String,
+    val positionTolerance: Float = 0f,
     private val logger: Logger = Logger.Console,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     /**
@@ -215,11 +230,17 @@ class EvidenceGraphLM(
      * fall back to its own default exploration policy (e.g. a random
      * unchecked location), the same way real Monty falls back to a naive
      * policy when goal-driven actions are off.
+     *
+     * This LM's own configured [positionTolerance] is forwarded to
+     * [suggestGoalLocation]'s [checkedLocations] check — see the class doc
+     * for why that value lives on the constructor rather than as a
+     * parameter here.
      */
     fun proposeGoal(): CmpGoal? {
         val result = recognitionResult()
         if (result !is RecognitionResult.Ambiguous) return null
-        val location = suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations) ?: return null
+        val location =
+            suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations, positionTolerance) ?: return null
         logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
         return CmpGoal(
             location = location,

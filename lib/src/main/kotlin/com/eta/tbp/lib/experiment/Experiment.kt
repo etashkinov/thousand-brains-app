@@ -99,7 +99,7 @@ class Experiment(
     private val logger: Logger = Logger.Console,
 ) {
     private val sensor = EnvironmentSensorModule(sensorId = "$lmId-sensor", environment = environment, logger = logger)
-    private val lm = EvidenceGraphLM(lmId = lmId, logger = logger)
+    private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = 0.3f, logger = logger)
     private val explorer = Explorer(sensor, lm, logger = logger)
 
     sealed class Outcome {
@@ -159,7 +159,14 @@ class Experiment(
     /** Loads previously taught objects (from [state]) into [lm]. */
     fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
 
-    /** Runs [explorer]'s motor system ([Explorer.explore]), bounded to [environment]'s own size — only [mode] differs between [train]/[evaluate]. */
+    /**
+     * Runs [explorer]'s motor system ([Explorer.explore]), bounded to
+     * [environment]'s own size — only [mode] differs between
+     * [train]/[evaluate]. [environment]'s own `positionTolerance` was
+     * already handed to [lm] at construction (see this class's own field
+     * initializers) — [explorer] reads it from there, so there's nothing to
+     * pass here.
+     */
     private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
         lm.setExperimentMode(mode)
         return explorer.explore(randomLocation = environment::randomLocation, maxSteps = environment.size * environment.size)

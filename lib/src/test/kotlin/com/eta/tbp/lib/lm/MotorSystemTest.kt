@@ -61,4 +61,26 @@ class MotorSystemTest {
         val next = motorSystem.nextLocation(goals = emptyList(), visited = setOf(FloatLocation(1f, 1f)))
         assertEquals(FloatLocation(2f, 2f), next)
     }
+
+    @Test
+    fun `with a nonzero positionTolerance, a goal near an already-visited location is treated as visited too`() {
+        val motorSystem = MotorSystem(randomLocation = { FloatLocation(9f, 9f) }, positionTolerance = 0.3f)
+        val next =
+            motorSystem.nextLocation(
+                goals = listOf(goal(FloatLocation(1.1f, 1f))),
+                visited = setOf(FloatLocation(1f, 1f)),
+            )
+        assertEquals(FloatLocation(9f, 9f), next)
+    }
+
+    @Test
+    fun `with a zero positionTolerance, a goal near but not exactly an already-visited location is still usable`() {
+        val motorSystem = MotorSystem(randomLocation = { FloatLocation(9f, 9f) })
+        val next =
+            motorSystem.nextLocation(
+                goals = listOf(goal(FloatLocation(1.1f, 1f))),
+                visited = setOf(FloatLocation(1f, 1f)),
+            )
+        assertEquals(FloatLocation(1.1f, 1f), next)
+    }
 }

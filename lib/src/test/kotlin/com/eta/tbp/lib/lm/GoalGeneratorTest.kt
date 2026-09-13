@@ -71,4 +71,27 @@ class GoalGeneratorTest {
 
         assertNull(suggestion)
     }
+
+    @Test
+    fun `a jittered checkedLocations entry still counts as checked under a nonzero positionTolerance`() {
+        val memory = GraphMemory()
+        teach(memory, "L", listOf(node(0f, 0f, "line"), node(0f, 1f, "line"), node(1f, 1f, "arc")))
+        teach(memory, "L2", listOf(node(0f, 0f, "line"), node(0f, 1f, "line"), node(1f, -1f, "arc")))
+
+        val observed = listOf(node(50f, 50f, "line"), node(50f, 51f, "line"))
+        // Off by 0.1 from the exact predicted arc locations (51f, 51f) / (51f, 49f).
+        val jitteredChecked: Set<Location> =
+            setOf(FloatLocation(50f, 50f), FloatLocation(50f, 51f), FloatLocation(51.1f, 51f), FloatLocation(51.1f, 49f))
+
+        val suggestion =
+            suggestGoalLocation(
+                memory,
+                tiedLabels = listOf("L", "L2"),
+                observedNodes = observed,
+                checkedLocations = jitteredChecked,
+                positionTolerance = 0.3f,
+            )
+
+        assertNull(suggestion)
+    }
 }

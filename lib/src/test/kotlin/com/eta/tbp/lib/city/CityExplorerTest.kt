@@ -34,9 +34,10 @@ class CityExplorerTest {
     private fun newExplorer(
         cityMap: GridEnvironment,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
+        positionTolerance: Float = 0f,
     ): Explorer {
         val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap)
-        val lm = EvidenceGraphLM(lmId = "city-lm")
+        val lm = EvidenceGraphLM(lmId = "city-lm", positionTolerance = positionTolerance)
         return Explorer(sensor, lm).apply { loadState(seedState) }
     }
 
@@ -45,6 +46,28 @@ class CityExplorerTest {
         cityMap: GridEnvironment,
         random: Random,
     ): () -> Location = { cityMap.cells.keys.random(random) }
+
+    /**
+     * Like [randomAmong], but each pick is offset by a small random amount
+     * (up to [maxJitter] per axis) — the "fuzzy map" scenario:
+     * [Explorer.visit] lands near a landmark's taught coordinate, not
+     * exactly on it, the way a real noisy sensor reading would. [maxJitter]
+     * must stay comfortably under both [GridEnvironment.positionTolerance]
+     * (so [GridEnvironment.featureAt] still resolves the landmark) and half
+     * the map's own inter-landmark spacing (so jitter never makes one
+     * landmark's reading closer to a different landmark).
+     */
+    private fun jitteredAmong(
+        cityMap: GridEnvironment,
+        pickRandom: Random,
+        jitterRandom: Random,
+        maxJitter: Float = 0.1f,
+    ): () -> Location = {
+        val cell = cityMap.cells.keys.random(pickRandom)
+        val dx = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
+        val dy = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
+        cell.plus(FloatLocation(dx, dy))
+    }
 
     /**
      * Teaches every landmark [cityMap] defines as [label] — visits them all
@@ -111,6 +134,22 @@ class CityExplorerTest {
         // but only Springfield's bakery position matches once that cell is reached.
         val cityMap = springfield(origin = FloatLocation(6f, 1f))
         val outcome = newExplorer(cityMap, afterBoth).explore(randomAmong(cityMap, Random(4)), maxSteps = cityMap.cells.size)
+
+        assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
+        assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)
+    }
+
+    @Test
+    fun `a city explored with jittered observations near each landmark is still Recognized`() {
+        val afterTeaching = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
+
+        val cityMap = springfield(origin = FloatLocation(4f, 5f))
+        val outcome =
+            newExplorer(cityMap, afterTeaching, positionTolerance = cityMap.positionTolerance)
+                .explore(
+                    jitteredAmong(cityMap, pickRandom = Random(5), jitterRandom = Random(6)),
+                    maxSteps = cityMap.cells.size,
+                )
 
         assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
         assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)

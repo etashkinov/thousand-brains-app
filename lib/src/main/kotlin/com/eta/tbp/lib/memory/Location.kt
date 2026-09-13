@@ -40,3 +40,25 @@ interface Location {
         ) = this
     }
 }
+
+/**
+ * Whether [other] is within [tolerance] of this location — the tolerant
+ * counterpart of exact [Location] equality, for callers that need "close
+ * enough to be the same place" rather than "bit-identical" (e.g.
+ * [com.eta.tbp.lib.sensor.Environment.positionTolerance]'s consumers). No
+ * default [tolerance]: it's a domain-scaled value (see
+ * [com.eta.tbp.lib.sensor.Environment.positionTolerance]'s own doc for why),
+ * never a single value safe to assume. Always `false` against
+ * [Location.Infinity] for any finite [tolerance] — its `magnitude()` is
+ * already `POSITIVE_INFINITY`, so no special-casing is needed here.
+ */
+fun Location.isNear(
+    other: Location,
+    tolerance: Float,
+): Boolean = displacement(other).magnitude() <= tolerance
+
+/** Whether any location in this collection [isNear] [location]. */
+fun Iterable<Location>.anyNear(
+    location: Location,
+    tolerance: Float,
+): Boolean = any { it.isNear(location, tolerance) }
