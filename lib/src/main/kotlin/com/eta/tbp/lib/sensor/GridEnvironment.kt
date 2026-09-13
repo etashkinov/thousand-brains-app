@@ -3,7 +3,6 @@ package com.eta.tbp.lib.sensor
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.LabelFeature
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
 import kotlin.random.Random
 
 /**
@@ -16,22 +15,23 @@ import kotlin.random.Random
  * fixtures build them via [of]'s [LabelFeature] shorthand) are the one
  * example today, but [cells] takes any [Feature].
  *
- * [positionTolerance] defaults to `0.3f`, comfortably under this class's own
- * 1.0-unit cell spacing (every test fixture in `Cities.kt` places landmarks
- * at least `sqrt(5)` ≈ 2.24 apart) — tunable per instance, same as [random].
+ * Owns no notion of tolerance itself — see [Environment.featureAt]'s own
+ * doc for why that value is supplied by the caller instead.
  */
 class GridEnvironment(
     override val size: Int,
     val cells: Map<Location, Feature>,
-    override val positionTolerance: PositionTolerance = PositionTolerance(0.3f),
     private val random: Random = Random.Default,
 ) : Environment {
     override fun randomLocation() = FloatLocation(random.nextInt(size).toFloat(), random.nextInt(size).toFloat())
 
-    /** The nearest cell within [positionTolerance] of [location], or `null` if none qualifies. */
-    override fun featureAt(location: Location): Feature? =
+    /** The nearest cell within [tolerance] of [location], or `null` if none qualifies. */
+    override fun featureAt(
+        location: Location,
+        tolerance: Float,
+    ): Feature? =
         cells.entries
-            .filter { (cellLocation, _) -> positionTolerance.isNear(cellLocation, location) }
+            .filter { (cellLocation, _) -> cellLocation.isNear(location, tolerance) }
             .minByOrNull { (cellLocation, _) -> cellLocation.displacement(location).magnitude() }
             ?.value
 
@@ -40,7 +40,6 @@ class GridEnvironment(
         fun of(
             size: Int,
             vararg features: Pair<Location, String>,
-            positionTolerance: PositionTolerance = PositionTolerance(0.3f),
             random: Random = Random.Default,
         ): GridEnvironment =
             GridEnvironment(
@@ -49,7 +48,6 @@ class GridEnvironment(
                     features.associate { (location, label) ->
                         location to LabelFeature(label)
                     },
-                positionTolerance = positionTolerance,
                 random = random,
             )
     }

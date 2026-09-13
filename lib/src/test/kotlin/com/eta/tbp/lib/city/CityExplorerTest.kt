@@ -5,7 +5,6 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.GridEnvironment
@@ -35,10 +34,10 @@ class CityExplorerTest {
     private fun newExplorer(
         cityMap: GridEnvironment,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
-        positionTolerance: PositionTolerance = PositionTolerance.EXACT,
+        positionTolerance: Float = 0f,
     ): Explorer {
-        val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap)
         val lm = EvidenceGraphLM(lmId = "city-lm", positionTolerance = positionTolerance)
+        val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap, positionTolerance = lm.positionTolerance)
         return Explorer(sensor, lm).apply { loadState(seedState) }
     }
 
@@ -53,8 +52,10 @@ class CityExplorerTest {
      * (up to [maxJitter] per axis) — the "fuzzy map" scenario:
      * [Explorer.visit] lands near a landmark's taught coordinate, not
      * exactly on it, the way a real noisy sensor reading would. [maxJitter]
-     * must stay comfortably under both [GridEnvironment.positionTolerance]
-     * (so [GridEnvironment.featureAt] still resolves the landmark) and half
+     * must stay comfortably under both the `positionTolerance` the probing
+     * [newExplorer]'s [EvidenceGraphLM] (and, from it, its
+     * [EnvironmentSensorModule]) is configured with — so
+     * [GridEnvironment.featureAt] still resolves the landmark — and half
      * the map's own inter-landmark spacing (so jitter never makes one
      * landmark's reading closer to a different landmark).
      */
@@ -63,12 +64,13 @@ class CityExplorerTest {
         pickRandom: Random,
         jitterRandom: Random,
         maxJitter: Float = 0.1f,
-    ): () -> Location = {
-        val cell = cityMap.cells.keys.random(pickRandom)
-        val dx = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
-        val dy = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
-        cell.plus(FloatLocation(dx, dy))
-    }
+    ): () -> Location =
+        {
+            val cell = cityMap.cells.keys.random(pickRandom)
+            val dx = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
+            val dy = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
+            cell.plus(FloatLocation(dx, dy))
+        }
 
     /**
      * Teaches every landmark [cityMap] defines as [label] — visits them all
@@ -146,7 +148,7 @@ class CityExplorerTest {
 
         val cityMap = springfield(origin = FloatLocation(4f, 5f))
         val outcome =
-            newExplorer(cityMap, afterTeaching, positionTolerance = cityMap.positionTolerance)
+            newExplorer(cityMap, afterTeaching, positionTolerance = 0.3f)
                 .explore(
                     jitteredAmong(cityMap, pickRandom = Random(5), jitterRandom = Random(6)),
                     maxSteps = cityMap.cells.size,

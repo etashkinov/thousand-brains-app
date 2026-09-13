@@ -10,7 +10,6 @@ import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.memory.edgeChainOf
 
 /**
@@ -106,23 +105,24 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * boundaries, teach outcomes, goal suggestions).
  *
  * [positionTolerance] is this LM's one configured answer to "how close is
- * close enough to be the same place" — set once at construction (default
- * [PositionTolerance.EXACT]) rather than threaded through every call that
- * needs it, the same way real Monty's `EvidenceGoalGenerator.__init__`
- * takes `goal_tolerances` as constructor config, not a `propose_goals()`
- * argument (`goal_generation.py`). [proposeGoal] uses it directly, and
- * [Explorer] reads this same property (rather than holding its own copy)
- * when it needs the identical notion of "same place" for its own
+ * close enough to be the same place" — set once at construction rather
+ * than threaded through every call that needs it, the same way real
+ * Monty's `EvidenceGoalGenerator.__init__` takes `goal_tolerances` as
+ * constructor config, not a `propose_goals()` argument
+ * (`goal_generation.py`). [proposeGoal] uses it directly, and [Explorer]
+ * reads this same property (rather than holding its own copy) when it
+ * needs the identical notion of "same place" for its own
  * `visited`-location bookkeeping — one source of truth instead of every
  * caller along the chain repeating (and risking disagreeing on) the same
- * value. A caller wired to a real [com.eta.tbp.lib.sensor.Environment]
- * should pass that environment's own `positionTolerance` here (see
- * [PositionTolerance]'s own doc for why the value itself is domain-scaled,
- * not a shared constant, and why it isn't a property of [Location] itself).
+ * value. This LM owns the value, not
+ * [com.eta.tbp.lib.sensor.Environment]: how forgiving a comparison should
+ * be is a property of the learning logic doing the comparing, not of the
+ * world being explored — see [com.eta.tbp.lib.sensor.Environment.featureAt]'s
+ * own doc for the same point made from the environment side.
  */
 class EvidenceGraphLM(
     override val lmId: String,
-    val positionTolerance: PositionTolerance = PositionTolerance.EXACT,
+    val positionTolerance: Float = 0.3f,
     private val logger: Logger = Logger.Console,
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     /**

@@ -4,7 +4,6 @@ import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
 import com.eta.tbp.lib.memory.edgeChainOf
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.PrimitiveFeature
@@ -90,7 +89,7 @@ class GoalGeneratorTest {
                 tiedLabels = listOf("L", "L2"),
                 observedNodes = observed,
                 checkedLocations = jitteredChecked,
-                positionTolerance = PositionTolerance(0.3f),
+                positionTolerance = 0.3f,
             )
 
         assertNull(suggestion)

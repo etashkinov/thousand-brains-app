@@ -26,6 +26,11 @@ interface Location {
         totalWeight: Float,
     ): Location
 
+    fun isNear(
+        other: Location,
+        tolerance: Float,
+    ): Boolean = displacement(other).magnitude() <= tolerance
+
     object Infinity : Location {
         override fun displacement(from: Location) = this
 
@@ -41,55 +46,8 @@ interface Location {
     }
 }
 
-/**
- * How close two [Location]s must be to count as the same place — the
- * tolerant counterpart of exact [Location] equality, for callers that need
- * "close enough to be the same place" rather than "bit-identical." Bundles
- * the raw tolerance value together with its own comparison methods, rather
- * than every call site passing a bare [Float] alongside the [Location]s
- * being compared (`a.isNear(b, tolerance)` scattered everywhere) — one
- * configured value, held once by whatever owns it
- * ([com.eta.tbp.lib.sensor.Environment.positionTolerance],
- * [com.eta.tbp.lib.lm.EvidenceGraphLM.positionTolerance]), used as
- * `tolerance.isNear(a, b)`.
- *
- * Deliberately *not* a property of [Location] itself: tolerance describes
- * how much error the *comparing process* (a sensor's precision, a domain's
- * own cell spacing) is willing to accept, not a fact about either point
- * being compared — two [Location] values don't each carry their own
- * opinion on this, the same way real Monty's own `cmp.Goal.goal_tolerances`
- * lives on the `Goal` message as a sibling of `location`, never embedded in
- * the location/coordinate itself (`cmp.py`). If a single goal ever needs
- * its own bespoke tolerance, [com.eta.tbp.lib.cmp.CmpGoal.goalTolerances]
- * is that extension point — not this class.
- *
- * A domain-scaled value: it must stay well under whatever domain it's used
- * in considers its own minimum distinct-location spacing, or genuinely
- * different locations start collapsing into each other (e.g. a city grid's
- * unit-spaced cells). [EXACT] is the only value safe to assume with no
- * domain context at all.
- */
-@JvmInline
-value class PositionTolerance(private val value: Float) {
-    /**
-     * Whether [b] is within this tolerance of [a]. Always `false` against
-     * [Location.Infinity] regardless of this tolerance's value — its
-     * `magnitude()` is already `POSITIVE_INFINITY`, so no special-casing is
-     * needed here.
-     */
-    fun isNear(
-        a: Location,
-        b: Location,
-    ): Boolean = a.displacement(b).magnitude() <= value
-
-    /** Whether any location in [locations] [isNear] [location]. */
-    fun anyNear(
-        locations: Iterable<Location>,
-        location: Location,
-    ): Boolean = locations.any { isNear(it, location) }
-
-    companion object {
-        /** Exact equality only — the safe default wherever a caller has no domain-scaled value to supply. */
-        val EXACT = PositionTolerance(0f)
-    }
-}
+/** Whether any location in [locations] [isNear] [location]. */
+fun Collection<Location>.anyNear(
+    location: Location,
+    tolerance: Float,
+): Boolean = this.any { location.isNear(it, tolerance) }

@@ -2,7 +2,6 @@ package com.eta.tbp.lib.sensor
 
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
 
 /**
  * Stands in for real Monty's `EmbodiedEnvironment`/dataset — the thing that
@@ -23,31 +22,34 @@ import com.eta.tbp.lib.memory.PositionTolerance
 interface Environment {
     val size: Int
 
-    /**
-     * How close two locations must be to count as the same addressable
-     * place — used both by [featureAt]'s nearest-cell lookup and, threaded
-     * through [Explorer][com.eta.tbp.lib.lm.Explorer]/
-     * [com.eta.tbp.lib.lm.MotorSystem]/[com.eta.tbp.lib.lm.EvidenceGraphLM],
-     * to stop an automated explorer from treating a jittered re-observation
-     * of somewhere already visited as new. Domain-owned rather than a
-     * shared constant (e.g. [com.eta.tbp.lib.memory.GraphMatcher]'s own,
-     * deliberately coarser position-error tolerance): it must stay well
-     * under this environment's own minimum distinct-location spacing, or
-     * genuinely different locations start collapsing into each other. See
-     * [PositionTolerance]'s own doc for why this lives here rather than on
-     * [Location] itself.
-     */
-    val positionTolerance: PositionTolerance
-
     /** A location [featureAt] can answer for — the one thing [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system needs when it has no goal-directed suggestion to act on instead. */
     fun randomLocation(): Location
 
     /**
-     * Whatever's at [location] (the nearest known cell within
-     * [positionTolerance], not necessarily an exact-coordinate match), or
-     * `null` if nothing qualifies — never throws for an out-of-range or
-     * unvisited [location], the same way a real sensor reports "nothing
-     * here" rather than failing.
+     * Whatever's at [location] — the nearest known cell within [tolerance],
+     * not necessarily an exact-coordinate match — or `null` if nothing
+     * qualifies. Never throws for an out-of-range or unvisited [location],
+     * the same way a real sensor reports "nothing here" rather than
+     * failing.
+     *
+     * [tolerance] is supplied by the caller
+     * ([EnvironmentSensorModule], configured with whatever value the
+     * learning logic considers "the same place" — see
+     * [com.eta.tbp.lib.lm.EvidenceGraphLM.positionTolerance]'s own doc)
+     * rather than owned by this [Environment]: how forgiving a match counts
+     * as "close enough" is a property of the process doing the comparing,
+     * not a fact about the world being queried — real Monty's own
+     * continuous environment has no such notion at all (there's no
+     * discreteness for it to be imprecise about); every bit of positional
+     * forgiveness on Monty's side lives on the LM comparing a *current*
+     * observation against its own *learned* graph
+     * (`GraphMatcher`-equivalent), never on the environment/dataset. This
+     * interface still owns the *mechanism* (nearest-cell search) because
+     * it's the only thing that knows what its own known locations are —
+     * just not the *value*.
      */
-    fun featureAt(location: Location): Feature?
+    fun featureAt(
+        location: Location,
+        tolerance: Float,
+    ): Feature?
 }

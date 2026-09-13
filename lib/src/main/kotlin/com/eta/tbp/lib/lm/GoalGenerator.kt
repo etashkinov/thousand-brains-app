@@ -4,7 +4,7 @@ import com.eta.tbp.lib.memory.GraphMatcher
 import com.eta.tbp.lib.memory.GraphMemory
 import com.eta.tbp.lib.memory.GraphNode
 import com.eta.tbp.lib.memory.Location
-import com.eta.tbp.lib.memory.PositionTolerance
+import com.eta.tbp.lib.memory.anyNear
 
 /**
  * Mirrors real Monty's Goal State Generator (see `EvidenceGoalGenerator` in
@@ -34,13 +34,13 @@ import com.eta.tbp.lib.memory.PositionTolerance
  * next location — plenty for the handful of tied labels and landmarks this
  * app's scale ever produces.
  *
- * [positionTolerance] (default [PositionTolerance.EXACT]) is an explicit
+ * [positionTolerance] is an explicit
  * parameter here rather than constructor config — this is a pure function,
  * not an object with a lifetime to configure — but its one real caller,
  * [EvidenceGraphLM.proposeGoal], doesn't take its own copy either: it
- * forwards [EvidenceGraphLM.positionTolerance] (see that property's doc, and
- * [PositionTolerance]'s own, for why the value lives there once rather than
- * being threaded through every layer). It governs only the
+ * forwards [EvidenceGraphLM.positionTolerance] (see that property's own doc
+ * for why the value lives there once rather than being threaded through
+ * every layer). It governs only the
  * [checkedLocations] membership test — a candidate's own predicted
  * locations are still grouped by exact [Location] equality
  * (`predictions.flatten().groupBy { it.location }` below), so two tied
@@ -54,7 +54,7 @@ fun suggestGoalLocation(
     tiedLabels: List<String>,
     observedNodes: List<GraphNode>,
     checkedLocations: Set<Location>,
-    positionTolerance: PositionTolerance = PositionTolerance.EXACT,
+    positionTolerance: Float = 0.3f,
 ): Location? {
     if (tiedLabels.size < 2) return null
 
@@ -68,7 +68,7 @@ fun suggestGoalLocation(
     if (predictions.size < 2) return null
 
     val uncheckedPredictions =
-        predictions.flatten().groupBy { it.location }.filterKeys { !positionTolerance.anyNear(checkedLocations, it) }
+        predictions.flatten().groupBy { it.location }.filterKeys { !checkedLocations.anyNear(it, positionTolerance) }
     if (uncheckedPredictions.isEmpty()) return null
 
     // A location only some of the tied candidates predict a node at, or predict different features at, can only help tell them apart.

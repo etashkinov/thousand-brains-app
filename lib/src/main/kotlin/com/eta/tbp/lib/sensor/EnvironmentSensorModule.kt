@@ -28,14 +28,24 @@ import com.eta.tbp.lib.memory.Location
  *
  * [logger] defaults to [com.eta.tbp.lib.log.Logger.Console], same as every
  * other class in this pipeline.
+ *
+ * [positionTolerance] is this sensor's
+ * own configured answer to "how close counts as the same place" for
+ * [Environment.featureAt]'s nearest-cell lookup — supplied here, not owned
+ * by [environment] itself (see [Environment.featureAt]'s own doc for why).
+ * A caller wiring this up alongside an [com.eta.tbp.lib.lm.EvidenceGraphLM]
+ * should pass that LM's own `positionTolerance` — the two need to agree on
+ * what "same place" means, or a location the LM considers already-checked
+ * could resolve to a different feature (or none) when actually revisited.
  */
 class EnvironmentSensorModule(
     override val sensorId: String,
     private val environment: Environment,
+    private val positionTolerance: Float = 0.3f,
     private val logger: Logger = Logger.Console,
 ) : SensorModule {
     override fun step(observation: Location): CmpMessage {
-        val feature = environment.featureAt(observation)
+        val feature = environment.featureAt(observation, positionTolerance)
         val passMessage = feature != null
         logger.debug(TAG) { "[$sensorId] $observation -> '${feature?.label}' (passMessage=$passMessage)" }
         return CmpMessage(

@@ -68,6 +68,15 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  * wires up — one [Logger] for the whole pipeline, each layer tagging its
  * own events.
  *
+ * [positionTolerance] is likewise
+ * handed to both [lm] and [sensor] — [environment] itself owns none of
+ * this (see [Environment.featureAt]'s own doc for why "how close counts as
+ * the same place" belongs to the learning logic, not the world being
+ * queried): this class is simply the one wiring point that hands the same
+ * configured value to whichever components need it, [lm] built first so
+ * [sensor] can be given [EvidenceGraphLM.positionTolerance] rather than a
+ * second, independently-supplied copy of the same value.
+ *
  * [sensor]/[lm]/[explorer] are built exactly once, in this class's own
  * initializer, and reused by every [train]/[evaluate] call on this
  * instance — mirroring real Monty's own `Monty` object, which is
@@ -96,10 +105,17 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 class Experiment(
     private val environment: Environment,
     private val lmId: String = "lm-0",
+    positionTolerance: Float = 0.3f,
     private val logger: Logger = Logger.Console,
 ) {
-    private val sensor = EnvironmentSensorModule(sensorId = "$lmId-sensor", environment = environment, logger = logger)
-    private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = environment.positionTolerance, logger = logger)
+    private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = positionTolerance, logger = logger)
+    private val sensor =
+        EnvironmentSensorModule(
+            sensorId = "$lmId-sensor",
+            environment = environment,
+            positionTolerance = lm.positionTolerance,
+            logger = logger,
+        )
     private val explorer = Explorer(sensor, lm, logger = logger)
 
     sealed class Outcome {
@@ -162,10 +178,10 @@ class Experiment(
     /**
      * Runs [explorer]'s motor system ([Explorer.explore]), bounded to
      * [environment]'s own size — only [mode] differs between
-     * [train]/[evaluate]. [environment]'s own `positionTolerance` was
-     * already handed to [lm] at construction (see this class's own field
-     * initializers) — [explorer] reads it from there, so there's nothing to
-     * pass here.
+     * [train]/[evaluate]. The configured `positionTolerance` was already
+     * handed to [lm] (and, from there, [sensor]) at construction — see this
+     * class's own field initializers — so [explorer] reads it from [lm]
+     * with nothing to pass here.
      */
     private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
         lm.setExperimentMode(mode)
