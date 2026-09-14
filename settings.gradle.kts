@@ -50,3 +50,4 @@ rootProject.name = "thousand-brains-app"
 include(":app")
 include(":lib")
 include(":web")
+include(":server")

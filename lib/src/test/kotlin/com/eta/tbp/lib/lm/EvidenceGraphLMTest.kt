@@ -241,6 +241,32 @@ class EvidenceGraphLMTest {
     }
 
     @Test
+    fun `checkedLocationsInOrder reports locations in visit order, not hash order`() {
+        val evidenceGraphLM = newLm()
+
+        // Chosen so a plain (unordered) Set's own iteration order is unlikely to match visit order by chance.
+        val visitOrder = listOf(FloatLocation(9f, 9f), FloatLocation(0f, 0f), FloatLocation(5f, 2f), FloatLocation(1f, 8f))
+        evidenceGraphLM.preEpisode()
+        visitOrder.forEach { location ->
+            evidenceGraphLM.matchingStep(listOf(message(location.location[0], location.location[1], "post_office")))
+        }
+
+        assertEquals(visitOrder, evidenceGraphLM.checkedLocationsInOrder())
+    }
+
+    @Test
+    fun `revisiting an already-checked location doesn't add a second entry to checkedLocationsInOrder`() {
+        val evidenceGraphLM = newLm()
+
+        evidenceGraphLM.preEpisode()
+        evidenceGraphLM.matchingStep(listOf(message(0f, 0f, "post_office")))
+        evidenceGraphLM.matchingStep(listOf(message(1f, 1f, "park")))
+        evidenceGraphLM.matchingStep(listOf(message(0f, 0f, "post_office")))
+
+        assertEquals(listOf(FloatLocation(0f, 0f), FloatLocation(1f, 1f)), evidenceGraphLM.checkedLocationsInOrder())
+    }
+
+    @Test
     fun `getOutput's confidence matches the top evidence value once something is taught and observed`() {
         val evidenceGraphLM = newLm()
 

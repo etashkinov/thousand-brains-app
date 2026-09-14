@@ -98,6 +98,9 @@ class Explorer(
     /** The full evidence breakdown across every taught label — for direct introspection, same spirit as [EvidenceGraphLM.evidenceSnapshot]. */
     fun evidenceSnapshot(): Map<String, Float> = lm.evidenceSnapshot()
 
+    /** [checkedLocations], in the order [visit] actually walked them — a direct passthrough to [EvidenceGraphLM.checkedLocationsInOrder]. */
+    fun checkedLocationsInOrder(): List<Location> = lm.checkedLocationsInOrder()
+
     /**
      * A live look at the recognition state so far this exploration —
      * unlike [endExploration], this doesn't end the episode, so a caller
@@ -162,7 +165,7 @@ class Explorer(
         var locationsVisited = 0
         while (locationsVisited < maxSteps) {
             val goals = listOfNotNull(proposeGoal())
-            val next = motorSystem.nextLocation(goals, lm.checkedLocations())
+            val next = motorSystem.nextLocation(goals, lm.checkedLocationsInOrder())
 
             logger.debug(TAG) {
                 "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "random"})"

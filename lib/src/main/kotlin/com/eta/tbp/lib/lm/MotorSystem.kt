@@ -53,7 +53,7 @@ class MotorSystem(
      */
     fun nextLocation(
         goals: List<CmpGoal>,
-        visited: Set<Location>,
+        visited: Collection<Location>,
     ): Location {
         val goalLocation = goals.firstOrNull { it.passMessage }?.location?.takeIf { !visited.anyNear(it, positionTolerance) }
         return goalLocation ?: generateSequence(randomLocation).first { !visited.anyNear(it, positionTolerance) }

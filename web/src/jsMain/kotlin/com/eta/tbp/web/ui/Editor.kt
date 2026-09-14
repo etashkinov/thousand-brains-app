@@ -24,10 +24,17 @@ import org.w3c.dom.HTMLSelectElement
 
 private const val LANDMARK_LABELS_LIST_ID = "landmark-labels"
 
-/** The right-hand panel: the create/edit form for [state]'s current draft, or an empty-state placeholder when nothing is being edited. */
+/**
+ * The right-hand panel: the create/edit form for [state]'s current draft, or an
+ * empty-state placeholder when nothing is being edited. [visitedCells] — the most
+ * recent Monty experiment's path, already scoped by the caller to the open draft
+ * (see [com.eta.tbp.web.state.MontyState.lastResultMapId]'s doc) — maps each visited
+ * cell to its 1-based step number, both to highlight and to number the cells it explored.
+ */
 fun renderEditor(
     container: HTMLElement,
     state: AppState,
+    visitedCells: Map<Pair<Int, Int>, Int> = emptyMap(),
 ) {
     container.innerHTML = ""
     val draft = state.draft
@@ -93,11 +100,17 @@ fun renderEditor(
                         for (row in 0 until draft.size) {
                             span(classes = "grid-header") { +"$row" }
                             for (col in 0 until draft.size) {
-                                textInput(classes = "cell-input") {
-                                    list = LANDMARK_LABELS_LIST_ID
-                                    value = byPosition[row to col]?.label ?: ""
-                                    onInputFunction = { event ->
-                                        state.setLandmarkQuietly(row, col, (event.target as HTMLInputElement).value)
+                                val step = visitedCells[row to col]
+                                div(classes = "cell-wrapper") {
+                                    if (step != null) {
+                                        span(classes = "step-badge") { +"$step" }
+                                    }
+                                    textInput(classes = if (step != null) "cell-input visited" else "cell-input") {
+                                        list = LANDMARK_LABELS_LIST_ID
+                                        value = byPosition[row to col]?.label ?: ""
+                                        onInputFunction = { event ->
+                                            state.setLandmarkQuietly(row, col, (event.target as HTMLInputElement).value)
+                                        }
                                     }
                                 }
                             }

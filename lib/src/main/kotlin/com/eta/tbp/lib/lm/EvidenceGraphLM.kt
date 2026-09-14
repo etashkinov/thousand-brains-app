@@ -140,7 +140,18 @@ class EvidenceGraphLM(
      */
     private val memory = GraphMemory()
     private val nodeBuffer = mutableListOf<GraphNode>()
-    private val checkedLocations = mutableSetOf<Location>()
+
+    /**
+     * Declared as `LinkedHashSet` specifically, not `mutableSetOf()`
+     * (which returns one too, but as the widened `MutableSet` type — a
+     * caller reading that declaration has no way to tell iteration order
+     * means anything): `LinkedHashSet`'s own contract guarantees iteration
+     * order equals insertion order, so this one field serves both
+     * [checkedLocations] (fast membership testing — order doesn't matter)
+     * and [checkedLocationsInOrder] (the path this episode actually took —
+     * order is the entire point) with nothing to keep in sync.
+     */
+    private val checkedLocations = LinkedHashSet<Location>()
     private var lastCompletedNodes: List<GraphNode>? = null
     private var mode = ExperimentMode.TRAIN
 
@@ -208,16 +219,8 @@ class EvidenceGraphLM(
         return recognized.ifEmpty { nodeBuffer }
     }
 
-    /**
-     * Every location a message has arrived for this episode, whether or not
-     * it carried a feature ([nodeBuffer] only ever holds the
-     * feature-bearing subset — see [matchingStep]'s own `passMessage` gate).
-     * This is the authoritative "already probed" record: a location with no
-     * feature is still a location an explorer shouldn't waste a future step
-     * revisiting, so [Explorer] reads this directly for its own
-     * [MotorSystem]'s `visited` check
-     */
-    fun checkedLocations(): Set<Location> = checkedLocations.toSet()
+    /** [checkedLocations], but as the sequence they were actually visited in — see that field's own doc for why `LinkedHashSet` makes this safe to read straight off it. For a caller that wants to number/replay the path an episode took (e.g. step numbers on a map), not membership testing (which is what [checkedLocations] itself is for). */
+    fun checkedLocationsInOrder(): List<Location> = checkedLocations.toList()
 
     /**
      * A [CmpGoal] proposing where to look next to tell the currently tied

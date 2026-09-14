@@ -35,6 +35,8 @@ class GridEnvironment(
             .minByOrNull { (cellLocation, _) -> cellLocation.displacement(location).magnitude() }
             ?.value
 
+    override fun toString() = "GridEnvironment(size=$size, cells=${cells.size})"
+
     companion object {
         /** `GridEnvironment.of(4, FloatLocation(0f, 0f) to "post_office", FloatLocation(2f, 1f) to "park")` — a [LabelFeature] shorthand for the common "named points of interest" case; cells left out default to null. [random] seeds [randomLocation]; pass a fixed seed for a reproducible exploration order (e.g. in tests). */
         fun of(

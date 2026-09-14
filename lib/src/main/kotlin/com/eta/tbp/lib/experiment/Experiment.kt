@@ -7,6 +7,7 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
+import com.eta.tbp.lib.memory.Location
 import com.eta.tbp.lib.sensor.Environment
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 
@@ -108,6 +109,10 @@ class Experiment(
     positionTolerance: Float = 0.3f,
     private val logger: Logger = Logger.Console,
 ) {
+    init {
+        logger.info(TAG) { "Experiment(lmId='$lmId', positionTolerance=$positionTolerance) on $environment" }
+    }
+
     private val lm = EvidenceGraphLM(lmId = lmId, positionTolerance = positionTolerance, logger = logger)
     private val sensor =
         EnvironmentSensorModule(
@@ -174,6 +179,9 @@ class Experiment(
 
     /** Loads previously taught objects (from [state]) into [lm]. */
     fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
+
+    /** [visitedLocations], in the order that episode actually walked them — a direct passthrough to [Explorer.checkedLocationsInOrder], for numbering/replaying the path (e.g. step numbers on a map) rather than just testing membership. */
+    fun visitedLocationsInOrder(): List<Location> = explorer.checkedLocationsInOrder()
 
     /**
      * Runs [explorer]'s motor system ([Explorer.explore]), bounded to
