@@ -1,0 +1,28 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a1a; background: #f5f5f5; }
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar { width: 260px; flex-shrink: 0; background: #202634; color: #fff; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.sidebar h1 { font-size: 18px; margin: 0; }
+.new-map-button { padding: 8px 12px; background: #4c8bf5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.new-map-button:hover { background: #3b74d6; }
+.map-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.map-item { display: flex; align-items: center; justify-content: space-between; border-radius: 6px; padding: 4px 8px; }
+.map-item:hover { background: #2c3446; }
+.map-item.selected { background: #37415a; }
+.map-name { cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delete-button { background: none; border: none; color: #aab2c5; cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
+.delete-button:hover { color: #f26161; }
+.empty-hint { color: #aab2c5; font-size: 13px; }
+
+.editor-panel { flex: 1; padding: 24px; overflow: auto; }
+.empty-state { color: #666; }
+.editor { max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 13px; font-weight: 600; color: #444; }
+.name-input, .size-select { padding: 8px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; }
+.grid { display: grid; gap: 4px; }
+.cell-input { width: 100%; min-width: 0; padding: 6px 4px; text-align: center; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; }
+.actions { display: flex; gap: 8px; }
+.save-button { padding: 8px 16px; background: #2e9e4f; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+.cancel-button { padding: 8px 16px; background: #e5e5e5; color: #333; border: none; border-radius: 6px; cursor: pointer; }
