@@ -16,6 +16,7 @@ import kotlinx.html.label
 import kotlinx.html.option
 import kotlinx.html.p
 import kotlinx.html.select
+import kotlinx.html.span
 import kotlinx.html.textInput
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.HTMLInputElement
@@ -83,13 +84,17 @@ fun renderEditor(
                         }
                     }
                     div(classes = "grid") {
-                        attributes["style"] = "grid-template-columns: repeat(${draft.size}, 1fr);"
+                        attributes["style"] = "grid-template-columns: auto repeat(${draft.size}, 1fr);"
+                        span(classes = "grid-corner") {}
+                        for (col in 0 until draft.size) {
+                            span(classes = "grid-header") { +"$col" }
+                        }
                         val byPosition = draft.landmarks.associateBy { it.row to it.col }
                         for (row in 0 until draft.size) {
+                            span(classes = "grid-header") { +"$row" }
                             for (col in 0 until draft.size) {
                                 textInput(classes = "cell-input") {
                                     list = LANDMARK_LABELS_LIST_ID
-                                    placeholder = "$row,$col"
                                     value = byPosition[row to col]?.label ?: ""
                                     onInputFunction = { event ->
                                         state.setLandmarkQuietly(row, col, (event.target as HTMLInputElement).value)

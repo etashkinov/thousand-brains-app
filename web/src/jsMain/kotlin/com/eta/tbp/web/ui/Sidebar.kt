@@ -1,10 +1,12 @@
 package com.eta.tbp.web.ui
 
+import com.eta.tbp.web.model.CityMap
 import com.eta.tbp.web.state.AppState
 import kotlinx.browser.window
 import kotlinx.html.button
 import kotlinx.html.dom.append
 import kotlinx.html.h1
+import kotlinx.html.h2
 import kotlinx.html.js.onClickFunction
 import kotlinx.html.li
 import kotlinx.html.p
@@ -48,5 +50,30 @@ fun renderSidebar(
                 }
             }
         }
+
+        h2(classes = "sidebar-section-title") { +"Labels" }
+        val citiesByLabel = citiesByLabel(state.maps)
+        if (citiesByLabel.isEmpty()) {
+            p(classes = "empty-hint") { +"No landmarks yet." }
+        } else {
+            ul(classes = "label-list") {
+                for ((label, cities) in citiesByLabel) {
+                    li(classes = "label-item") {
+                        span(classes = "label-name") { +label }
+                        span(classes = "label-cities") { +cities.joinToString(", ") }
+                    }
+                }
+            }
+        }
     }
 }
+
+/** Every distinct landmark label across [maps], sorted, with the (sorted, deduped) names of the cities it appears in. */
+private fun citiesByLabel(maps: List<CityMap>): Map<String, List<String>> =
+    maps
+        .flatMap { map -> map.landmarks.map { it.label to map.name } }
+        .groupBy({ it.first }, { it.second })
+        .mapValues { (_, cities) -> cities.distinct().sorted() }
+        .toList()
+        .sortedBy { (label, _) -> label }
+        .toMap()
