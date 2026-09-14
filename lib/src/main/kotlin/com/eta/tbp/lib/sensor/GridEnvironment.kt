@@ -25,6 +25,14 @@ class GridEnvironment(
 ) : Environment {
     override fun randomLocation() = FloatLocation(random.nextInt(size).toFloat(), random.nextInt(size).toFloat())
 
+    /** The 4 orthogonal neighbors of [location] (up/down/left/right one grid unit — no diagonals, the way city blocks are actually laid out) that still fall within `[0, size)` on both axes. */
+    override fun adjacentLocations(location: Location): List<Location> {
+        val (x, y) = (location as FloatLocation).location[0] to location.location[1]
+        return listOf(x to y - 1f, x to y + 1f, x - 1f to y, x + 1f to y)
+            .filter { (nx, ny) -> nx >= 0f && nx < size && ny >= 0f && ny < size }
+            .map { (nx, ny) -> FloatLocation(nx, ny) }
+    }
+
     /** The nearest cell within [tolerance] of [location], or `null` if none qualifies. */
     override fun featureAt(
         location: Location,

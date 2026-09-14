@@ -4,6 +4,7 @@ import com.eta.tbp.lib.cmp.CmpGoal
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.sensor.Environment
 import com.eta.tbp.lib.sensor.SensorModule
 
 /**
@@ -23,9 +24,12 @@ import com.eta.tbp.lib.sensor.SensorModule
  * needed one either.
  *
  * "Episode" here is one exploration — however many locations [visit] is
- * called for, in whatever order, ending at [endExploration] — the same
- * episode-boundary idiom [lm] itself already uses for a character. Locations
- * don't need to be adjacent or visited in any particular order:
+ * called for, ending at [endExploration] — the same episode-boundary idiom
+ * [lm] itself already uses for a character. [visit] itself takes any
+ * [Location], adjacent to the last one or not — a caller driving it directly
+ * (a test exercising this class without a full grid, say) isn't required to
+ * respect adjacency, only [explore]'s own [MotorSystem] is (see its doc).
+ * Nor do visits need to happen in any particular order:
  * [GraphMatcher][com.eta.tbp.lib.memory.GraphMatcher]'s translation- and
  * order-tolerant matching is exactly what makes that safe — the explorer
  * never needs to know its own coordinate in the taught model's frame, only
@@ -40,21 +44,18 @@ import com.eta.tbp.lib.sensor.SensorModule
  * [explore] additionally owns the *motor system* role real Monty's `Monty`
  * constructor takes a `motor_system` for: deciding, at each step, where to
  * go next, via a [MotorSystem] it builds for the episode. Real Monty's own
- * `NaiveScanPolicy` never receives (and the [SensorModule] interface never
- * exposes) "everywhere the sensor could go" — it applies a small fixed
- * relative step, over and over, capped by a step count
- * (`check_reached_max_matching_steps`), and defers to a goal state once the
- * LM has one to offer. [MotorSystem] mirrors that same "prefer the goal,
- * else fall back" shape rather than real Monty's actual
- * `MotorSystem`/`MotorPolicySelector` machinery (`motor_system.py`, built
- * for continuous 3D agent motion — far more than this domain needs): prefer
- * [proposeGoal]'s goal-directed pick; otherwise ask [randomLocation] for a
- * candidate, retrying if it's one [visit] already used this episode; stop
- * after [maxSteps] regardless. That's a deliberate, stated exception, the
- * same category IMPLEMENTATION_PLAN.md's own compatibility table already
- * makes for the touch tier ("Motor system + simulator driving a sensor" →
- * "Not ported — the human *is* the motor system"); here nothing plays that
- * role for an *automated* explorer, so [explore] has to.
+ * `NaiveScanPolicy` applies a small fixed relative step, over and over,
+ * capped by a step count (`check_reached_max_matching_steps`), and defers to
+ * a goal state once the LM has one to offer — never a free jump to anywhere
+ * unvisited. [MotorSystem] mirrors that same "small step, prefer the goal,
+ * else fall back" shape (not real Monty's actual `MotorSystem`/
+ * `MotorPolicySelector` machinery, built for continuous 3D agent motion —
+ * far more than this domain needs), constrained to [Environment.adjacentLocations][com.eta.tbp.lib.sensor.Environment.adjacentLocations]
+ * the same way. That's a deliberate, stated exception, the same category
+ * IMPLEMENTATION_PLAN.md's own compatibility table already makes for the
+ * touch tier ("Motor system + simulator driving a sensor" → "Not ported —
+ * the human *is* the motor system"); here nothing plays that role for an
+ * *automated* explorer, so [explore] has to.
  *
  * [logger] logs only what's unique to this layer — the move itself and the
  * episode's start/end — not [sensorModule]'s or [lm]'s own events, which
@@ -72,10 +73,13 @@ class Explorer(
         logger.debug(TAG) { "exploration started" }
     }
 
-    /** Moves to [location] (not necessarily adjacent to the last one) and folds its observed feature into the current exploration. */
-    private fun visit(location: Location) {
+    /** Moves to [location] (not necessarily adjacent to the last one — see class doc) and folds its observed feature into the current exploration. Public for a caller that wants to drive an episode directly (e.g. a test exercising this class's/[EvidenceGraphLM]'s wiring without a full grid walk) rather than through [explore]'s own adjacency-constrained [MotorSystem]. */
+    fun visit(
+        environment: Environment,
+        location: Location,
+    ) {
         logger.debug(TAG) { "visiting $location" }
-        lm.matchingStep(listOf(sensorModule.step(location)))
+        lm.matchingStep(listOf(sensorModule.step(environment, location)))
     }
 
     fun endExploration(): RecognitionResult {
@@ -120,61 +124,64 @@ class Explorer(
     /**
      * Runs one full episode, for at most [maxSteps] visits — the motor
      * system this class owns (see class doc), delegated for the episode to
-     * a fresh [MotorSystem] built from [randomLocation] and [lm]'s own
+     * a fresh [MotorSystem] built from [adjacentLocations] and [lm]'s own
      * configured [EvidenceGraphLM.positionTolerance] (see that property's
      * doc for why this class reads it from [lm] rather than taking its own
-     * copy as a parameter here). At each step: [MotorSystem.nextLocation]
-     * prefers [proposeGoal]'s goal-directed pick; if it's null or already
-     * visited this episode, it asks [randomLocation] instead, retrying it
-     * for as long as it keeps returning an already-visited location. Stops
-     * early on [RecognitionResult.Recognized] unless [everything] is set —
-     * teaching a second object that shares landmarks with an already-taught
-     * one needs every candidate observed, not just however many it took to
-     * (mis)match the first thing already known (see [EvidenceGraphLM.teach]'s
-     * own doc for why teaching needs the complete sequence).
+     * copy as a parameter here). [startLocation] places the explorer once, at
+     * the very beginning, before there's any "current location" for
+     * [adjacentLocations] to work from (see [com.eta.tbp.lib.sensor.Environment.randomLocation]'s
+     * own doc); every step after that moves to one of the current location's
+     * own [adjacentLocations] instead — [MotorSystem.nextLocation] prefers
+     * whichever unvisited neighbor is closest to [proposeGoal]'s
+     * goal-directed pick, else the first unvisited neighbor, else backtracks
+     * down an already-walked block toward a different one. Stops early on
+     * [RecognitionResult.Recognized] unless [everything] is set — teaching a
+     * second object that shares landmarks with an already-taught one needs
+     * every candidate observed, not just however many it took to (mis)match
+     * the first thing already known (see [EvidenceGraphLM.teach]'s own doc
+     * for why teaching needs the complete sequence) — or once
+     * [MotorSystem.nextLocation] itself returns `null`: every location
+     * reachable from [startLocation] has already been visited, so there's
+     * nowhere left to backtrack to either, regardless of [maxSteps].
      *
-     * [randomLocation] must not be able to produce more than [maxSteps]
-     * distinct locations — once every location it can produce has been
-     * visited, [MotorSystem]'s already-visited retry never terminates. A
-     * caller whose domain is a bounded space (e.g. a city's NxN grid) should
-     * size [maxSteps] to that space's own extent, the same way real Monty's
-     * `NaiveScanPolicy` is bounded by a caller-configured step count, not by
-     * anything it discovers about the environment itself. That bound holds
-     * regardless of [lm]'s [EvidenceGraphLM.positionTolerance]: a domain like
-     * [GridEnvironment][com.eta.tbp.lib.sensor.GridEnvironment] still only
-     * ever samples the same finite set of distinct locations — a nonzero
-     * tolerance can only shrink how many of them count as distinct (each
-     * visited location also excludes its close neighbors), never grow the
-     * set [randomLocation] draws from.
-     *
-     * "Already visited," for [MotorSystem]'s purposes, is
-     * [EvidenceGraphLM.checkedLocations] — every location a message arrived
-     * for, not just the feature-bearing subset [EvidenceGraphLM.currentNodes]
-§     * exposes (see that method's own doc). A featureless probe still
-     * shouldn't be revisited; using the narrower set here would let
-     * [MotorSystem] send the explorer back to a cell it already knows is
-     * empty.
+     * [maxSteps] needs enough headroom for backtracking, not just one visit
+     * per reachable location: a caller whose domain is a bounded space (e.g.
+     * a city's NxN grid) should size it well above that space's own cell
+     * count, since a dead end can send the explorer back over already-walked
+     * ground before it reaches new territory — seeing every location doesn't
+     * cost more than roughly 3× the reachable count even in the worst case
+     * (each connecting step walked at most once forward and once back), but
+     * a tighter budget risks giving up with the environment only partly
+     * toured. Same spirit as real Monty's own `NaiveScanPolicy`, bounded by a
+     * caller-configured step count rather than anything it discovers about
+     * the environment itself — just a bigger number here, to pay for the
+     * routes teleportation used to skip.
      */
     fun explore(
-        randomLocation: () -> Location,
-        maxSteps: Int,
+        environment: Environment,
+        startLocation: Location,
         everything: Boolean = false,
     ): ExplorationOutcome {
         beginExploration()
-        val motorSystem = MotorSystem(randomLocation, lm.positionTolerance)
-        var locationsVisited = 0
-        while (locationsVisited < maxSteps) {
+        val motorSystem = MotorSystem(environment::adjacentLocations, lm.positionTolerance)
+
+        var current = startLocation
+        logger.debug(TAG) { "step 1: visiting $current (start)" }
+        visit(environment, current)
+        var locationsVisited = 1
+
+        // see doc for why 3× the grid's own cell count is enough headroom for backtracking
+        val maxSteps = environment.size * environment.size * 3
+        while (locationsVisited < maxSteps && (everything || currentResult() !is RecognitionResult.Recognized)) {
             val goals = listOfNotNull(proposeGoal())
-            val next = motorSystem.nextLocation(goals, lm.checkedLocationsInOrder())
+            val next = motorSystem.nextLocation(current, goals, lm.checkedLocationsInOrder()) ?: break
 
             logger.debug(TAG) {
-                "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "random"})"
+                "step ${locationsVisited + 1}: visiting $next (${if (goals.any { it.location == next }) "goal-suggested" else "adjacent"})"
             }
-            visit(next)
+            current = next
+            visit(environment, current)
             locationsVisited++
-
-            if (!everything && currentResult() is RecognitionResult.Recognized) break
-            // Ambiguous or Unknown: not resolved yet, keep moving.
         }
 
         return ExplorationOutcome(endExploration(), locationsVisited)

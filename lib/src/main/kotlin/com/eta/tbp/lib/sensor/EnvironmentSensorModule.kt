@@ -40,16 +40,18 @@ import com.eta.tbp.lib.memory.Location
  */
 class EnvironmentSensorModule(
     override val sensorId: String,
-    private val environment: Environment,
     private val positionTolerance: Float = 0.3f,
     private val logger: Logger = Logger.Console,
 ) : SensorModule {
-    override fun step(observation: Location): CmpMessage {
-        val feature = environment.featureAt(observation, positionTolerance)
+    override fun step(
+        environment: Environment,
+        location: Location,
+    ): CmpMessage {
+        val feature = environment.featureAt(location, positionTolerance)
         val passMessage = feature != null
-        logger.debug(TAG) { "[$sensorId] $observation -> '${feature?.label}' (passMessage=$passMessage)" }
+        logger.debug(TAG) { "[$sensorId] $location -> '${feature?.label}' (passMessage=$passMessage)" }
         return CmpMessage(
-            location = observation,
+            location = location,
             feature = feature,
             confidence = 1f,
             passMessage = passMessage,

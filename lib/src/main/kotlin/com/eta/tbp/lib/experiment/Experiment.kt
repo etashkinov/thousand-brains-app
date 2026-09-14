@@ -23,11 +23,13 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  *
  * Automates the "explore until recognized" loop end to end, per TBP's own
  * framing: an explorer who finds themselves in [environment] doesn't know
- * their own coordinate on arrival, so each episode starts by visiting
- * locations in a random order (not just a random first location — see
+ * their own coordinate on arrival, so each episode starts at a random
+ * location (not necessarily a discriminating one — see
  * [GraphMatcher][com.eta.tbp.lib.memory.GraphMatcher]'s doc for why anchoring
- * can't assume the first thing observed is discriminating), checking the
- * recognition state after every visit:
+ * can't assume the first thing observed is), then walks it block by block
+ * from there — [environment]'s own [Environment.adjacentLocations], not a
+ * teleport to anywhere still unvisited — checking the recognition state
+ * after every visit:
  *
  * - [RecognitionResult.Recognized] (unique match) → stop, report it.
  * - [RecognitionResult.Ambiguous] (multiple known objects still fit) → ask
@@ -40,11 +42,13 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  *
  * This whole loop — [Explorer]'s motor system, see its own class doc — is
  * generic and lives in [Explorer.explore]; [runEpisode] here only supplies
- * [environment]'s own random-location sampler and its size-bounded step
- * cap. [Explorer] never sees the environment itself, only a way to ask for
- * one more random location — the same separation real Monty keeps between
- * an SM (never told the full observation space) and the environment/dataset
- * that actually knows it.
+ * [environment]'s own starting-location sampler, its adjacency function, and
+ * a step cap sized well past [environment]'s own cell count (see
+ * [runEpisode]'s own doc for why). [Explorer] never sees the environment
+ * itself, only a way to ask for a starting location and, from any location,
+ * its neighbors — the same separation real Monty keeps between an SM (never
+ * told the full observation space) and the environment/dataset that
+ * actually knows it.
  *
  * [train] and [evaluate] mirror `MontyExperiment.train()`/`.evaluate()`, not
  * one method with a mode flag: they diverge in exactly one place, whether
@@ -117,7 +121,6 @@ class Experiment(
     private val sensor =
         EnvironmentSensorModule(
             sensorId = "$lmId-sensor",
-            environment = environment,
             positionTolerance = lm.positionTolerance,
             logger = logger,
         )
@@ -144,9 +147,12 @@ class Experiment(
     }
 
     /** Explores [environment] and, if nothing already taught uniquely matches, teaches [label] as a new object — real Monty's TRAIN behavior (a known ground-truth label, supplied by the caller the same way a labeled dataset entry supplies one). */
-    fun train(label: String): Outcome {
+    fun train(
+        label: String,
+        start: Location = environment.randomLocation(),
+    ): Outcome {
         logger.info(TAG) { "train('$label') starting on $environment" }
-        val exploration = runEpisode(ExperimentMode.TRAIN)
+        val exploration = runEpisode(ExperimentMode.TRAIN, start)
         val result = exploration.result
         val outcome =
             if (result is RecognitionResult.Recognized) {
@@ -162,7 +168,7 @@ class Experiment(
     /** Explores [environment] purely to check it against what's already known — never writes to [lm]'s memory, matching real Monty's EVALUATE behavior. */
     fun evaluate(): Outcome {
         logger.info(TAG) { "evaluate() starting on $environment" }
-        val exploration = runEpisode(ExperimentMode.EVALUATE)
+        val exploration = runEpisode(ExperimentMode.EVALUATE, environment.randomLocation())
         val result = exploration.result
         val outcome =
             if (result is RecognitionResult.Recognized) {
@@ -184,19 +190,35 @@ class Experiment(
     fun visitedLocationsInOrder(): List<Location> = explorer.checkedLocationsInOrder()
 
     /**
-     * Runs [explorer]'s motor system ([Explorer.explore]), bounded to
-     * [environment]'s own size — only [mode] differs between
+     * Runs [explorer]'s motor system ([Explorer.explore]), bounded to well
+     * past [environment]'s own cell count — only [mode] differs between
      * [train]/[evaluate]. The configured `positionTolerance` was already
      * handed to [lm] (and, from there, [sensor]) at construction — see this
      * class's own field initializers — so [explorer] reads it from [lm]
      * with nothing to pass here.
+     *
+     * [STEP_BUDGET_MULTIPLIER] scales [environment]'s cell count
+     * ([Environment.size] squared) rather than reusing it directly: with
+     * [Explorer.explore] now walking [environment] block by block instead of
+     * teleporting, a dead end can send the explorer back over already-walked
+     * ground before it reaches unvisited territory (see [Explorer.explore]'s
+     * own doc), so guaranteeing every reachable cell gets seen — the same
+     * guarantee a step budget of exactly `size * size` gave for free under
+     * teleportation — needs headroom for that backtracking, not just one
+     * step per cell.
      */
-    private fun runEpisode(mode: ExperimentMode): ExplorationOutcome {
+    private fun runEpisode(
+        mode: ExperimentMode,
+        start: Location,
+    ): ExplorationOutcome {
         lm.setExperimentMode(mode)
-        return explorer.explore(randomLocation = environment::randomLocation, maxSteps = environment.size * environment.size)
+        return explorer.explore(environment, start)
     }
 
     private companion object {
         const val TAG = "Experiment"
+
+        /** See [runEpisode]'s own doc. */
+        const val STEP_BUDGET_MULTIPLIER = 4
     }
 }

@@ -41,11 +41,18 @@ class CityExperimentTest {
     ): Map<String, List<GraphObjectModel>> {
         val explorer =
             Explorer(
-                EnvironmentSensorModule(sensorId = "teach-sensor", environment = cityMap),
+                EnvironmentSensorModule(sensorId = "teach-sensor"),
                 EvidenceGraphLM(lmId = "teach-lm"),
             ).apply { loadState(priorState) }
 
-        explorer.explore({ cityMap.cells.keys.random(random) }, maxSteps = cityMap.cells.size, everything = true)
+        // Visits every landmark directly, in a shuffled order -- not Explorer.explore's own
+        // block-by-block whole-grid walk (see CityExplorerTest's own doc for why that's the
+        // right call here too: this helper exercises teaching, not a realistic grid tour).
+        explorer.beginExploration()
+        cityMap.cells.keys
+            .shuffled(random)
+            .forEach { explorer.visit(cityMap, it) }
+        explorer.endExploration()
 
         explorer.teach(label)
         return explorer.state()
@@ -59,8 +66,23 @@ class CityExperimentTest {
 
         assertTrue("expected Taught but was $outcome", outcome is Experiment.Outcome.Taught)
         assertEquals("Springfield", (outcome as Experiment.Outcome.Taught).label)
-        assertEquals(100, outcome.locationsVisited) // every cell of the 10x10 grid
+        // Every cell of the 10x10 grid was visited at least once -- not necessarily exactly
+        // 100 *steps* any more, since a block-by-block walk can double back over already-walked
+        // ground to reach a new block (see Explorer.explore's own doc on backtracking).
+        assertEquals(100, experiment.visitedLocationsInOrder().toSet().size)
+        assertTrue(outcome.locationsVisited >= 100)
         assertEquals(setOf("Springfield"), experiment.state().keys)
+        // Exactly springfield()'s own 3 landmarks -- not more: backtracking over an
+        // already-walked block necessarily revisits some cells (see the assertions
+        // above), and a real landmark among them must not be taught twice over.
+        assertEquals(
+            3,
+            experiment
+                .state()
+                .getValue("Springfield")
+                .single()
+                .nodes.size,
+        )
     }
 
     @Test
@@ -70,7 +92,8 @@ class CityExperimentTest {
         val outcome = experiment.evaluate()
 
         assertTrue("expected NoMatch but was $outcome", outcome is Experiment.Outcome.NoMatch)
-        assertEquals(100, (outcome as Experiment.Outcome.NoMatch).locationsVisited)
+        assertEquals(100, experiment.visitedLocationsInOrder().toSet().size)
+        assertTrue((outcome as Experiment.Outcome.NoMatch).locationsVisited >= 100)
         assertEquals(emptySet<String>(), experiment.state().keys)
     }
 

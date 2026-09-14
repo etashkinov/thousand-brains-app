@@ -157,8 +157,13 @@ class EvidenceGraphLM(
 
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
-            message.location?.let { checkedLocations += it }
-            if (!message.passMessage) continue
+            // .add()'s own return value: false means this location was already checked earlier this
+            // episode — e.g. a motor system backtracking through an already-walked cell to reach a
+            // dead end's way around (see Explorer/MotorSystem's own docs). Re-adding its node to
+            // nodeBuffer would double-count the same real observation as if it were two, inflating
+            // evidence for whatever it matches without anything new actually having been seen.
+            val isNewLocation = message.location?.let { checkedLocations.add(it) } ?: false
+            if (!message.passMessage || !isNewLocation) continue
             val node = toGraphNode(message)
             nodeBuffer.add(node)
             logger.debug(TAG) { "[$lmId] node ${node.id}: '${node.feature.label}' at ${node.location}" }

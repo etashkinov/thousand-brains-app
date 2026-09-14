@@ -76,7 +76,10 @@ class MontyServiceTest {
 
         val result = runExperiment(service, ExperimentMode.EVALUATE, "Springfield", springfield)
 
-        assertEquals(result.locationsVisited, result.visitedCells.size)
+        // A block-by-block walk can double back over already-walked ground to reach a new block, so
+        // locationsVisited (every step, backtracking included) can exceed visitedCells.size (every
+        // *distinct* cell, each appearing once) -- it can never be fewer.
+        assertTrue(result.locationsVisited >= result.visitedCells.size)
         val allPositions = (0 until 5).flatMap { row -> (0 until 5).map { col -> row to col } }
         assertEquals(allPositions.toSet(), result.visitedCells.map { it.row to it.col }.toSet())
         assertEquals((1..result.visitedCells.size).toSet(), result.visitedCells.map { it.step }.toSet())

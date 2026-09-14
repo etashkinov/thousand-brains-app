@@ -13,17 +13,34 @@ import com.eta.tbp.lib.memory.Location
  * action and gets back whatever observation results
  * (`EmbodiedEnvironment.step(action) -> observation`), whereas this
  * interface is a direct pull — [featureAt] answers "what's here" for any
- * [Location] with no notion of physically getting there, and [randomLocation]
- * answers "give me somewhere valid" instead of a motor system computing a
- * reachable next pose itself. That's an accepted simplification for this
- * app's discrete domains (no continuous agent motion to simulate), not a
- * literal port — see [GridEnvironment] for the one concrete implementation.
+ * [Location] with no notion of physically getting there. [randomLocation]
+ * still answers "give me somewhere valid" rather than a motor system
+ * computing a reachable pose itself, but only for placing the explorer at
+ * an episode's start; every step after that goes through [adjacentLocations]
+ * instead, so the *route* (not just the destination) is at least
+ * block-by-block real. That's an accepted simplification for this app's
+ * discrete domains (no continuous agent motion to simulate), not a literal
+ * port — see [GridEnvironment] for the one concrete implementation.
  */
 interface Environment {
     val size: Int
 
-    /** A location [featureAt] can answer for — the one thing [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system needs when it has no goal-directed suggestion to act on instead. */
+    /** Where to place the explorer at the very start of an episode — before they've set foot anywhere, so there's no "current location" yet for [adjacentLocations] to work from. [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system uses this exactly once per episode. */
     fun randomLocation(): Location
+
+    /**
+     * Every location reachable in one step from [location] — real city
+     * blocks an explorer standing at [location] could walk to directly, not
+     * teleport past. [Explorer][com.eta.tbp.lib.lm.Explorer]'s motor system
+     * uses this for every step after the first (see [randomLocation]'s own
+     * doc for that one exception): forbidding non-adjacent jumps is a
+     * deliberate divergence from Monty's own "teleport anywhere valid"
+     * simplification this interface used to make uniformly (see this
+     * interface's own class doc) — real Monty's motor policies don't
+     * teleport either, and a city explorer walking block to block is a
+     * closer match to that than a free jump ever was.
+     */
+    fun adjacentLocations(location: Location): List<Location>
 
     /**
      * Whatever's at [location] — the nearest known cell within [tolerance],

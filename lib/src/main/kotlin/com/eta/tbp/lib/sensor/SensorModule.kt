@@ -7,7 +7,10 @@ import com.eta.tbp.lib.memory.Location
 interface SensorModule {
     val sensorId: String
 
-    fun step(observation: Location): CmpMessage
+    fun step(
+        environment: Environment,
+        observation: Location,
+    ): CmpMessage
 
     fun preEpisode()
 

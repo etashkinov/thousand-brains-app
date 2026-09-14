@@ -5,6 +5,7 @@ import com.eta.tbp.lib.lm.Explorer
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.memory.GraphObjectModel
 import com.eta.tbp.lib.memory.Location
+import com.eta.tbp.lib.sensor.Environment
 import com.eta.tbp.lib.sensor.EnvironmentSensorModule
 import com.eta.tbp.lib.sensor.FloatLocation
 import com.eta.tbp.lib.sensor.GridEnvironment
@@ -15,8 +16,7 @@ import kotlin.random.Random
 
 /**
  * End-to-end coverage of the "detect city" scenario from TBP: an explorer
- * moves cell to cell (not necessarily adjacent) in an unfamiliar city,
- * comparing what they observe against every previously taught city, until
+ * compares what they observe against every previously taught city, until
  * either a unique match or a confident no-match emerges. Every piece here —
  * [Explorer], [com.eta.tbp.lib.sensor.EnvironmentSensorModule], [com.eta.tbp.lib.memory.LabelFeature], [GridEnvironment] — is a thin domain
  * plug-in; the actual matching/evidence logic is exactly
@@ -25,31 +25,33 @@ import kotlin.random.Random
  * [springfield]/[shelbyville]/[capitalCity] (`Cities.kt`) are shared with
  * [CityExperimentTest] rather than each file keeping its own copy.
  *
- * [randomAmong] samples only [GridEnvironment.cells] (the taught landmarks) rather
- * than [com.eta.tbp.lib.experiment.Experiment]'s own whole-grid [Explorer.explore]
- * policy — this file exercises [Explorer]/[EvidenceGraphLM] wiring, not a
+ * Drives [Explorer] directly ([Explorer.visit], not [Explorer.explore]) over
+ * only [GridEnvironment.cells] (the taught landmarks), in a shuffled order —
+ * unlike [com.eta.tbp.lib.experiment.Experiment], whose own [Explorer.explore]
+ * now walks the whole grid block by block, empty cells included, and can't
+ * jump straight between landmarks that aren't adjacent. This file exercises
+ * [Explorer]/[EvidenceGraphLM] wiring directly against every landmark, not a
  * realistic blind grid tour, which [CityExperimentTest] already covers.
  */
 class CityExplorerTest {
     private fun newExplorer(
-        cityMap: GridEnvironment,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
         positionTolerance: Float = 0f,
     ): Explorer {
         val lm = EvidenceGraphLM(lmId = "city-lm", positionTolerance = positionTolerance)
-        val sensor = EnvironmentSensorModule(sensorId = "city-sensor", environment = cityMap, positionTolerance = lm.positionTolerance)
+        val sensor = EnvironmentSensorModule(sensorId = "city-sensor", positionTolerance = lm.positionTolerance)
         return Explorer(sensor, lm).apply { loadState(seedState) }
     }
 
-    /** A `() -> Location` that samples uniformly among [cityMap]'s own landmark cells — [Explorer.explore]'s only source of "where to look next" absent a goal suggestion. */
-    private fun randomAmong(
+    /** Every one of [cityMap]'s own landmark cells, in a shuffled order — [runExploration]'s tour. */
+    private fun shuffledLandmarks(
         cityMap: GridEnvironment,
         random: Random,
-    ): () -> Location = { cityMap.cells.keys.random(random) }
+    ): List<Location> = cityMap.cells.keys.shuffled(random)
 
     /**
-     * Like [randomAmong], but each pick is offset by a small random amount
-     * (up to [maxJitter] per axis) — the "fuzzy map" scenario:
+     * Like [shuffledLandmarks], but each entry is offset by a small random
+     * amount (up to [maxJitter] per axis) — the "fuzzy map" scenario:
      * [Explorer.visit] lands near a landmark's taught coordinate, not
      * exactly on it, the way a real noisy sensor reading would. [maxJitter]
      * must stay comfortably under both the `positionTolerance` the probing
@@ -59,18 +61,32 @@ class CityExplorerTest {
      * the map's own inter-landmark spacing (so jitter never makes one
      * landmark's reading closer to a different landmark).
      */
-    private fun jitteredAmong(
+    private fun jitteredLandmarks(
         cityMap: GridEnvironment,
         pickRandom: Random,
         jitterRandom: Random,
         maxJitter: Float = 0.1f,
-    ): () -> Location =
-        {
-            val cell = cityMap.cells.keys.random(pickRandom)
+    ): List<Location> =
+        shuffledLandmarks(cityMap, pickRandom).map { cell ->
             val dx = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
             val dy = (jitterRandom.nextFloat() * 2f - 1f) * maxJitter
             cell.plus(FloatLocation(dx, dy))
         }
+
+    /** Visits every one of [locations] in order, stopping early on [RecognitionResult.Recognized] unless [everything] is set — mirrors [Explorer.explore]'s own stopping rule, without its adjacency-constrained motor system. */
+    private fun runExploration(
+        explorer: Explorer,
+        environment: Environment,
+        locations: List<Location>,
+        everything: Boolean = false,
+    ): RecognitionResult {
+        explorer.beginExploration()
+        for (location in locations) {
+            explorer.visit(environment, location)
+            if (!everything && explorer.currentResult() is RecognitionResult.Recognized) break
+        }
+        return explorer.endExploration()
+    }
 
     /**
      * Teaches every landmark [cityMap] defines as [label] — visits them all
@@ -85,8 +101,8 @@ class CityExplorerTest {
         label: String,
         seedState: Map<String, List<GraphObjectModel>> = emptyMap(),
     ): Map<String, List<GraphObjectModel>> {
-        val explorer = newExplorer(cityMap, seedState)
-        explorer.explore(randomAmong(cityMap, Random(0)), maxSteps = cityMap.cells.size, everything = true)
+        val explorer = newExplorer(seedState)
+        runExploration(explorer, cityMap, shuffledLandmarks(cityMap, Random(0)), everything = true)
         explorer.teach(label)
         return explorer.state()
     }
@@ -94,7 +110,7 @@ class CityExplorerTest {
     @Test
     fun `exploring before anything is taught reports Unknown`() {
         val cityMap = springfield(origin = FloatLocation(1f, 1f))
-        val result = newExplorer(cityMap).explore(randomAmong(cityMap, Random(1)), maxSteps = cityMap.cells.size).result
+        val result = runExploration(newExplorer(), cityMap, shuffledLandmarks(cityMap, Random(1)))
         assertEquals(RecognitionResult.Unknown, result)
     }
 
@@ -106,10 +122,7 @@ class CityExplorerTest {
         // no way to know their true coordinate in the taught map) and visits
         // the landmarks in a different order (a different random seed).
         val cityMap = springfield(origin = FloatLocation(4f, 5f))
-        val result =
-            newExplorer(cityMap, afterTeaching)
-                .explore(randomAmong(cityMap, Random(2)), maxSteps = cityMap.cells.size)
-                .result
+        val result = runExploration(newExplorer(afterTeaching), cityMap, shuffledLandmarks(cityMap, Random(2)))
 
         assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
         assertEquals("Springfield", (result as RecognitionResult.Recognized).label)
@@ -120,8 +133,8 @@ class CityExplorerTest {
         val afterSpringfield = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
 
         val cityMap = capitalCity(origin = FloatLocation(2f, 4f))
-        val capitalCityExplorer = newExplorer(cityMap, afterSpringfield)
-        val unknownResult = capitalCityExplorer.explore(randomAmong(cityMap, Random(3)), maxSteps = cityMap.cells.size).result
+        val capitalCityExplorer = newExplorer(afterSpringfield)
+        val unknownResult = runExploration(capitalCityExplorer, cityMap, shuffledLandmarks(cityMap, Random(3)))
         assertEquals(RecognitionResult.Unknown, unknownResult)
 
         capitalCityExplorer.teach("Capital City")
@@ -136,10 +149,10 @@ class CityExplorerTest {
         // Springfield's own layout again, elsewhere in the grid: shares post office + park with Shelbyville,
         // but only Springfield's bakery position matches once that cell is reached.
         val cityMap = springfield(origin = FloatLocation(6f, 1f))
-        val outcome = newExplorer(cityMap, afterBoth).explore(randomAmong(cityMap, Random(4)), maxSteps = cityMap.cells.size)
+        val result = runExploration(newExplorer(afterBoth), cityMap, shuffledLandmarks(cityMap, Random(4)))
 
-        assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
-        assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)
+        assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
+        assertEquals("Springfield", (result as RecognitionResult.Recognized).label)
     }
 
     @Test
@@ -147,14 +160,14 @@ class CityExplorerTest {
         val afterTeaching = teach(springfield(origin = FloatLocation(1f, 1f)), "Springfield")
 
         val cityMap = springfield(origin = FloatLocation(4f, 5f))
-        val outcome =
-            newExplorer(cityMap, afterTeaching, positionTolerance = 0.3f)
-                .explore(
-                    jitteredAmong(cityMap, pickRandom = Random(5), jitterRandom = Random(6)),
-                    maxSteps = cityMap.cells.size,
-                )
+        val result =
+            runExploration(
+                newExplorer(afterTeaching, positionTolerance = 0.3f),
+                cityMap,
+                jitteredLandmarks(cityMap, pickRandom = Random(5), jitterRandom = Random(6)),
+            )
 
-        assertTrue("expected Recognized but was ${outcome.result}", outcome.result is RecognitionResult.Recognized)
-        assertEquals("Springfield", (outcome.result as RecognitionResult.Recognized).label)
+        assertTrue("expected Recognized but was $result", result is RecognitionResult.Recognized)
+        assertEquals("Springfield", (result as RecognitionResult.Recognized).label)
     }
 }
