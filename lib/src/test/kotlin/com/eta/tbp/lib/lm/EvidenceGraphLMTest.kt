@@ -277,4 +277,51 @@ class EvidenceGraphLMTest {
         val output = requireNotNull(evidenceGraphLM.getOutput())
         assertEquals(evidenceGraphLM.evidenceSnapshot().getValue("line"), output.confidence, 1e-6f)
     }
+
+    @Test
+    fun `a taught city is not recognized from a foreign landmark plus a single shared one`() {
+        val evidenceGraphLM = newLm()
+        drive(
+            evidenceGraphLM,
+            listOf(
+                message(0f, 0f, "city-hall"),
+                message(1f, 0f, "bakery"),
+                message(2f, 0f, "town-hall"),
+                message(3f, 0f, "power-plant"),
+                message(4f, 0f, "school"),
+            ),
+        )
+        evidenceGraphLM.teach("Springfield")
+
+        // A different city that happens to share exactly one landmark's label with Springfield.
+        evidenceGraphLM.preEpisode()
+        evidenceGraphLM.matchingStep(listOf(message(9f, 9f, "cinema")))
+        evidenceGraphLM.matchingStep(listOf(message(10f, 9f, "bakery")))
+
+        assertEquals(RecognitionResult.Unknown, evidenceGraphLM.recognitionResult())
+    }
+
+    @Test
+    fun `a single matching observation isn't enough to recognize a multi-node object`() {
+        val evidenceGraphLM = newLm()
+        drive(evidenceGraphLM, listOf(message(0f, 0f, "city-hall"), message(1f, 0f, "bakery")))
+        evidenceGraphLM.teach("Springfield")
+
+        evidenceGraphLM.preEpisode()
+        evidenceGraphLM.matchingStep(listOf(message(50f, 50f, "city-hall")))
+
+        assertEquals(RecognitionResult.Unknown, evidenceGraphLM.recognitionResult())
+    }
+
+    @Test
+    fun `a single observation is enough to recognize a genuinely 1-node object`() {
+        val evidenceGraphLM = newLm()
+        drive(evidenceGraphLM, listOf(message(0f, 0f, "lighthouse")))
+        evidenceGraphLM.teach("SoloIsland")
+
+        evidenceGraphLM.preEpisode()
+        evidenceGraphLM.matchingStep(listOf(message(50f, 50f, "lighthouse")))
+
+        assertEquals(RecognitionResult.Recognized("SoloIsland", 1f), evidenceGraphLM.recognitionResult())
+    }
 }

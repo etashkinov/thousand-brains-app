@@ -7,38 +7,58 @@ package com.eta.tbp.lib.memory
  * character can start anywhere in touch-space, and a city explorer doesn't
  * know their starting cell's true coordinate in the taught map either — so
  * every comparison first picks an anchor pair and re-bases every other
- * node's [Location] to it before comparing. Anchoring only needs to try
- * *one* fixed candidate node (its very first) against every feature-
- * compatible stored node — O(stored size) anchor attempts, not every
- * (stored node, candidate node) pair.
+ * node's [Location] to it before comparing.
  *
- * That's safe even for an automated random-order explorer
- * ([com.eta.tbp.lib.experiment.Experiment]) that can't guarantee its first
- * observation is one the true matching object shares, because [scoreForAnchor]
- * is a hard veto per node: if *any* buffered node's feature has zero
- * feature-compatible counterpart anywhere in a stored model, that model
- * scores zero no matter which node was chosen as the anchor — the anchor
- * only decides the assumed translation, not whether each individual node
- * has a match at all. So trying every candidate node as an alternate anchor
- * can never rescue a case anchoring on the first node couldn't already
- * resolve; the two searches always agree. What genuinely matters instead is
- * never letting an unrecognized first observation *become* the anchor in
- * the first place — see [com.eta.tbp.lib.lm.EvidenceGraphLM.matchingStep]'s
- * own doc for how it defers to [GraphMemory.hasCompatibleFeature] for that.
+ * Every observed node is scored, not just the ones a stored model has a
+ * counterpart for: a node with no feature-compatible, nearby counterpart in
+ * [stored] contributes [MIN_EVIDENCE] rather than being dropped or vetoing
+ * the whole comparison — mirrors real Monty's own
+ * `_calculate_evidence_for_new_locations`
+ * (`evidence_matching/hypotheses_displacer.py`), which assigns evidence -1
+ * to a hypothesis when nothing is within `max_match_distance` instead of
+ * discarding the observation: an observation that doesn't fit a candidate
+ * is itself evidence against it, not noise to filter out beforehand. See
+ * [com.eta.tbp.lib.lm.EvidenceGraphLM]'s own class doc for why an earlier
+ * version of this port got that wrong (dropping anything that didn't match
+ * *any* taught object, globally, before scoring ever started) and what that
+ * broke.
+ *
+ * Anchoring itself mirrors an actual journey: [candidate]'s nodes are tried
+ * *in the order they arrived*, and the first one with any feature-compatible
+ * counterpart anywhere in [target] becomes the anchor, full stop — the same
+ * way a real explorer's first recognized landmark becomes their reference
+ * point for interpreting everything else, not something they'd retroactively
+ * swap out for a "better" one after the fact. [bestAnchor] only searches
+ * *within [target]* for the best partner for that one fixed candidate node
+ * (there can be several equally-compatible target nodes, e.g. two stored
+ * "line" nodes); it never reconsiders a later candidate node as an
+ * alternative anchor once an earlier one has already found a match. This
+ * keeps the search to at most O(candidate + target) work — one pass to find
+ * the anchor, one to score against it — rather than treating every
+ * (candidate node, target node) pair as its own hypothesis to fully score
+ * and compare, which would cost O(candidate² × target) for no real benefit
+ * at this app's scale.
+ *
+ * A candidate node that isn't the fixed anchor but still has no
+ * feature-compatible, nearby counterpart in [target] does still count
+ * against the match (see [MIN_EVIDENCE] below) — only the anchor *choice*
+ * itself is fixed to the first workable one, not the scoring of everything
+ * after it.
  *
  * There is no assumption that nodes arrive in a fixed order either: unlike
  * a pen stroke's inherent draw order, a city can be explored one arbitrary
  * cell at a time ("not necessarily adjacent"), so once an anchor is fixed,
  * [findNodeNear] looks up each remaining candidate node's best-matching
- * stored node by proximity — feature-compatible and closest by
- * [Location.displacement]/[Location.magnitude] — rather than by position in
- * the sequence. [findNodeNear] is a plain tolerant nearest-match, not an
- * exact-equality index: these graphs are a handful of nodes (a character's
- * primitives, a city's landmarks), so a linear scan costs nothing, and
- * grading by distance rather than requiring exact equality is what lets a
- * jittery real-world observation (unlike a city cell's exact grid
- * coordinate) still match — the same universal-over-[Location] contract
- * [GraphMemory]'s merge averaging relies on.
+ * stored node by proximity — feature-compatible, closest by
+ * [Location.displacement]/[Location.magnitude], and within
+ * [MAX_POSITION_ERROR] — rather than by position in the sequence.
+ * [findNodeNear] is a plain tolerant nearest-match, not an exact-equality
+ * index: these graphs are a handful of nodes (a character's primitives, a
+ * city's landmarks), so a linear scan costs nothing, and grading by
+ * distance rather than requiring exact equality is what lets a jittery
+ * real-world observation (unlike a city cell's exact grid coordinate) still
+ * match — the same universal-over-[Location] contract [GraphMemory]'s merge
+ * averaging relies on.
  *
  * Everything here is generic over any [Location]/[Feature] pair — a node's
  * feature must not be an infinite [Feature.difference] from its candidate
@@ -50,11 +70,14 @@ package com.eta.tbp.lib.memory
 object GraphMatcher {
     private const val NO_MATCH = 0f
 
+    /** Mirrors real Monty's own `MIN_EVIDENCE` (`hypotheses_displacer.py`) — what an observation with no nearby, feature-compatible counterpart in a candidate contributes: disconfirming, not neutral. */
+    private const val MIN_EVIDENCE = -1f
+
     // normalized-space units (Phase 1 normalizes to unit radius); a city's grid units play the same role.
     private const val MAX_POSITION_ERROR = 1f
     private const val MAX_FEATURE_DIFFERENCE = 1f // same scale as MAX_POSITION_ERROR, for a node's feature difference
 
-    /** Full match: [stored] and [candidate] must have the same node count. */
+    /** Full match: [stored] and [candidate] must have the same node count — used for deciding whether a freshly taught exemplar should merge into this one, where a wildly different node count is itself a good reason not to (see [GraphMemory.addOrMerge]). Unlike [partialMatchScore], a node count mismatch alone is disqualifying here, before any per-node scoring. */
     fun matchScore(
         stored: GraphObjectModel,
         candidate: GraphObjectModel,
@@ -64,16 +87,21 @@ object GraphMatcher {
     }
 
     /**
-     * Live/partial match: scores how well [partialNodes] (fewer nodes than
-     * the full stored model — a shape mid-stroke, or a city only partly
-     * explored) corresponds to some subset of [stored]'s nodes.
+     * Live/partial match: scores every one of [observedNodes] — however many
+     * have been observed so far this episode, fewer than [stored]'s own node
+     * count early on, or *more* (e.g. an observation [stored] has no
+     * counterpart for at all) — against [stored]. See the class doc for why
+     * an unexplained observation drags the score down instead of being
+     * dropped or forcing an automatic zero; unlike [matchScore], there's no
+     * node-count gate here at all, since a partial (or over-complete)
+     * observation is the normal case, not a disqualifying one.
      */
     fun partialMatchScore(
         stored: GraphObjectModel,
-        partialNodes: List<GraphNode>,
+        observedNodes: List<GraphNode>,
     ): Float {
-        if (partialNodes.isEmpty() || partialNodes.size > stored.nodes.size) return NO_MATCH
-        return anchoredScore(stored.nodes, partialNodes)
+        if (observedNodes.isEmpty() || stored.nodes.isEmpty()) return NO_MATCH
+        return anchoredScore(stored.nodes, observedNodes)
     }
 
     /**
@@ -139,18 +167,30 @@ object GraphMatcher {
     private fun anchoredScore(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
-    ): Float = bestAnchor(target, candidate)?.score ?: NO_MATCH
+    ): Float = (bestAnchor(target, candidate)?.score ?: NO_MATCH).coerceIn(0f, 1f)
 
-    /** Anchors on [candidate]'s first node alone, tried against every feature-compatible node in [target] — see class doc for why one fixed candidate node is enough. */
+    /** [candidate]'s nodes tried as the anchor in arrival order — the first one with any feature-compatible [target] counterpart wins; see class doc for why later candidate nodes are never reconsidered as alternative anchors once that happens. */
     private fun bestAnchor(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
     ): Anchor? {
-        val anchorCandidateNode = candidate.firstOrNull() ?: return null
+        for (candidateNode in candidate) {
+            val anchor = bestTargetPartnerFor(target, candidate, candidateNode)
+            if (anchor != null) return anchor
+        }
+        return null
+    }
+
+    /** The best-scoring [target] node to pair [anchorCandidateNode] with — there can be several equally feature-compatible options (e.g. two stored "line" nodes) — or null if nothing in [target] is feature-compatible with it at all. */
+    private fun bestTargetPartnerFor(
+        target: List<GraphNode>,
+        candidate: List<GraphNode>,
+        anchorCandidateNode: GraphNode,
+    ): Anchor? {
         var best: Anchor? = null
         for (targetNode in target) {
             if (targetNode.feature.difference(anchorCandidateNode.feature).isInfinite()) continue
-            val score = scoreForAnchor(target, candidate, targetNode, anchorCandidateNode)
+            val score = evidenceForAnchor(target, candidate, targetNode, anchorCandidateNode)
             if (best == null || score > best.score) {
                 best = Anchor(targetNode, anchorCandidateNode, score)
             }
@@ -158,38 +198,42 @@ object GraphMatcher {
         return best
     }
 
-    /** Every [candidate] node against its own best-matching [target] node (via [findNodeNear]) once both sides are re-based to ([anchorTargetNode], [anchorCandidateNode]), averaged into one [0,1] score. */
-    private fun scoreForAnchor(
+    /** Every [candidate] node scored against its own best-matching [target] node (via [findNodeNear]) once both sides are re-based to ([anchorTargetNode], [anchorCandidateNode]) — [MIN_EVIDENCE] for one with no match at all — averaged into one score. */
+    private fun evidenceForAnchor(
         target: List<GraphNode>,
         candidate: List<GraphNode>,
         anchorTargetNode: GraphNode,
         anchorCandidateNode: GraphNode,
     ): Float {
-        var totalPositionError = 0f
-        var totalFeatureDifference = 0f
-
+        var totalEvidence = 0f
         for (candidateNode in candidate) {
             val candidateRelative = candidateNode.location.displacement(anchorCandidateNode.location)
-            val match =
-                findNodeNear(target, anchorTargetNode, candidateRelative, candidateNode.feature)
-                    ?: return NO_MATCH
-            totalPositionError += match.positionError
-            totalFeatureDifference += candidateNode.feature.difference(match.node.feature)
+            val match = findNodeNear(target, anchorTargetNode, candidateRelative, candidateNode.feature)
+            totalEvidence += match?.let { nodeEvidence(candidateNode, it) } ?: MIN_EVIDENCE
         }
+        return totalEvidence / candidate.size
+    }
 
-        val n = candidate.size
-        val positionScore = (1f - (totalPositionError / n) / MAX_POSITION_ERROR).coerceIn(0f, 1f)
-        val featureScore = (1f - (totalFeatureDifference / n) / MAX_FEATURE_DIFFERENCE).coerceIn(0f, 1f)
+    /** [MAX_POSITION_ERROR]/[MAX_FEATURE_DIFFERENCE]-normalized closeness of [candidateNode] to its [match], averaged into [0,1] — 1 only when both the position and the feature match exactly. */
+    private fun nodeEvidence(
+        candidateNode: GraphNode,
+        match: NearestMatch,
+    ): Float {
+        val positionScore = (1f - match.positionError / MAX_POSITION_ERROR).coerceIn(0f, 1f)
+        val featureScore = (1f - candidateNode.feature.difference(match.node.feature) / MAX_FEATURE_DIFFERENCE).coerceIn(0f, 1f)
         return (positionScore + featureScore) / 2f
     }
 
     /**
-     * The feature-compatible entry in [nodes] whose location — re-based to
-     * [nodesAnchor], the same way [relativeLocation] already is — sits
-     * closest to [relativeLocation]. A plain linear scan (see class doc for
-     * why that's the right call at this scale), tolerant of position error
-     * rather than requiring exact equality. Null if nothing in [nodes] is
-     * feature-compatible with [feature] at all.
+     * The feature-compatible entry in [nodes], within [MAX_POSITION_ERROR],
+     * whose location — re-based to [nodesAnchor], the same way
+     * [relativeLocation] already is — sits closest to [relativeLocation]. A
+     * plain linear scan (see class doc for why that's the right call at this
+     * scale), tolerant of position error rather than requiring exact
+     * equality. Null if nothing in [nodes] is feature-compatible with
+     * [feature] at all, or the nearest compatible entry is still further
+     * than [MAX_POSITION_ERROR] away — mirrors real Monty's own
+     * `max_match_distance` radius check (see class doc).
      */
     private fun findNodeNear(
         nodes: List<GraphNode>,
@@ -206,6 +250,6 @@ object GraphMatcher {
                 best = NearestMatch(node, positionError)
             }
         }
-        return best
+        return best?.takeIf { it.positionError <= MAX_POSITION_ERROR }
     }
 }

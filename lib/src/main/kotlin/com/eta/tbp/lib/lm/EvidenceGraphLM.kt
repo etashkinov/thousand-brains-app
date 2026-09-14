@@ -40,25 +40,25 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * Evidence accumulates live as primitives arrive (not just once the stroke
  * completes): each new primitive extends this episode's node buffer, and
  * [GraphMatcher.partialMatchScore] scores that growing shape against every
- * stored model's same-length window.
+ * stored model.
  *
  * [nodeBuffer] itself keeps every observed node in strict visit order,
- * unconditionally — [teach] needs the *complete* sequence even when nothing
- * in it matched anything taught yet (that's exactly what teaching a
- * genuinely new object looks like). Matching is different: [GraphMatcher]
- * anchors on whichever node it's given first (see its own doc for why one
- * fixed node is enough), and a node with zero feature-compatible match
- * anywhere in a taught model dooms that model to zero evidence for the rest
- * of the episode. So [evidenceSnapshot] doesn't hand [GraphMatcher]
- * [nodeBuffer] as observed — it hands it [matchingCandidates]'s view, which
- * drops any node [GraphMemory.hasCompatibleFeature] doesn't recognize
- * anywhere (it could never help a score anyway) rather than letting it
- * monopolize the anchor slot or inflate the candidate count past a smaller
- * taught model's own node count. An automated explorer starting from a
- * random, unknown location ([Experiment]) can't
- * guarantee its first observation is a discriminating one; this is what
- * lets a later, recognized observation still anchor the match instead of
- * an earlier unrecognized one permanently stalling it.
+ * unconditionally, and [evidenceSnapshot] hands [GraphMatcher] that same
+ * buffer as-is, unfiltered — an earlier version of this class instead
+ * pre-filtered it down to nodes [GraphMemory.hasCompatibleFeature]
+ * recognized *somewhere*, on the reasoning that a node nothing taught has
+ * ever seen the like of "can't contribute positively to any model's score."
+ * That was wrong: dropping it meant a city with a landmark nothing taught
+ * has ever seen (a real, discriminating fact — it doesn't belong to
+ * whatever's being explored) simply vanished from the comparison instead of
+ * counting against every candidate it doesn't fit, letting a handful of
+ * genuinely matching nodes plus one utterly foreign one still read as a
+ * confident, unique match. [GraphMatcher.partialMatchScore] fixes this at
+ * the source (see its own doc) by scoring every observed node — one with no
+ * match anywhere in a given candidate now counts as evidence *against* that
+ * candidate specifically, the way real Monty's own evidence accumulation
+ * treats an out-of-range observation, rather than being discarded before
+ * comparison or vetoing every candidate outright.
  *
  * [getOutput] mirrors real Monty's `get_output()`: a single-hypothesis
  * point estimate (the current best label + its confidence), structurally
@@ -192,31 +192,9 @@ class EvidenceGraphLM(
      */
     fun evidenceSnapshot(): Map<String, Float> {
         if (nodeBuffer.isEmpty()) return emptyMap()
-        val candidateNodes = matchingCandidates()
         return memory.allLabels().associateWith { label ->
-            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, candidateNodes) }
+            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodeBuffer) }
         }
-    }
-
-    /**
-     * [nodeBuffer] with any node [GraphMemory.hasCompatibleFeature] doesn't
-     * recognize anywhere dropped — not just reordered out of the anchor
-     * slot: a node nothing taught has ever seen the like of can't
-     * contribute positively to *any* model's score (see class doc), so
-     * leaving it in would only ever inflate [GraphMatcher.partialMatchScore]'s
-     * candidate count past a smaller taught model's own node count, or trip
-     * its per-node hard veto — never help. Removing it also happens to
-     * promote the next recognized node into the anchor slot for free,
-     * without needing a separate reordering step. Unchanged if [memory] has
-     * nothing taught yet ([teach]ing a first-ever object needs every
-     * observation kept), or if nothing in [nodeBuffer] is recognized at all
-     * (falls back to the full, unfiltered buffer — evidence comes out at
-     * zero regardless, via the same hard veto).
-     */
-    private fun matchingCandidates(): List<GraphNode> {
-        if (memory.allLabels().isEmpty()) return nodeBuffer
-        val recognized = nodeBuffer.filter { memory.hasCompatibleFeature(it.feature) }
-        return recognized.ifEmpty { nodeBuffer }
     }
 
     /** [checkedLocations], but as the sequence they were actually visited in — see that field's own doc for why `LinkedHashSet` makes this safe to read straight off it. For a caller that wants to number/replay the path an episode took (e.g. step numbers on a map), not membership testing (which is what [checkedLocations] itself is for). */
@@ -247,7 +225,7 @@ class EvidenceGraphLM(
         val result = recognitionResult()
         if (result !is RecognitionResult.Ambiguous) return null
         val location =
-            suggestGoalLocation(memory, result.labels, matchingCandidates(), checkedLocations, positionTolerance) ?: return null
+            suggestGoalLocation(memory, result.labels, nodeBuffer, checkedLocations, positionTolerance) ?: return null
         logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
         return CmpGoal(
             location = location,
@@ -302,8 +280,43 @@ class EvidenceGraphLM(
     /** Labels within [xPercentThreshold]% of the max evidence — see the top-level [possibleMatches] this delegates to. */
     fun possibleMatches(xPercentThreshold: Float = 10f): List<String> = possibleMatches(evidenceSnapshot(), xPercentThreshold)
 
-    /** Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI decision — see the top-level [recognitionResult]. */
-    fun recognitionResult(): RecognitionResult = recognitionResult(evidenceSnapshot())
+    /**
+     * Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI
+     * decision — see the top-level [recognitionResult]. Downgrades a would-be
+     * [RecognitionResult.Recognized] to [RecognitionResult.Unknown] ("nothing
+     * settled yet, keep exploring" — indistinguishable from genuine
+     * [RecognitionResult.Unknown] to [Explorer.explore]'s own loop, which
+     * treats anything but [RecognitionResult.Recognized] as "keep going")
+     * while fewer than [MIN_OBSERVATIONS] nodes have been observed this
+     * episode: mirrors real Monty's own terminal-state gating, which never
+     * even checks whether an episode is done until `min_eval_steps`/
+     * `min_train_steps` have elapsed (`monty_base.py`) — otherwise a *single*
+     * lucky matching node, with only one object ever taught to compare
+     * against, would trivially be "the unique match" on its own. Scaled way
+     * down from Monty's own default (`min_eval_steps: 20`, tuned for
+     * point clouds with hundreds of points) to fit graphs this app's domains
+     * actually have (a character's handful of primitives, a city's handful
+     * of landmarks) — see [MIN_OBSERVATIONS]'s own doc.
+     */
+    fun recognitionResult(): RecognitionResult {
+        val result = recognitionResult(evidenceSnapshot())
+        if (result is RecognitionResult.Recognized && nodeBuffer.size < minObservationsToRecognize(result.label)) {
+            return RecognitionResult.Unknown
+        }
+        return result
+    }
+
+    /**
+     * [MIN_OBSERVATIONS], capped at [label]'s own smallest taught variant's
+     * node count — a 1-node object (a one-landmark city, say) is fully
+     * described by a single observation, so requiring a second, unrelated
+     * one before it can ever be "recognized" would make it unrecognizable
+     * outright rather than just cautious.
+     */
+    private fun minObservationsToRecognize(label: String): Int {
+        val smallestVariantSize = memory.candidatesForLabel(label).minOfOrNull { it.nodes.size } ?: return MIN_OBSERVATIONS
+        return minOf(MIN_OBSERVATIONS, smallestVariantSize)
+    }
 
     private fun toGraphNode(message: CmpMessage): GraphNode {
         val location = requireNotNull(message.location) { "Messages fed into matchingStep must carry a location" }
@@ -313,5 +326,8 @@ class EvidenceGraphLM(
 
     private companion object {
         const val TAG = "EvidenceGraphLM"
+
+        /** See [recognitionResult]'s own doc for what this gates and why. */
+        const val MIN_OBSERVATIONS = 2
     }
 }

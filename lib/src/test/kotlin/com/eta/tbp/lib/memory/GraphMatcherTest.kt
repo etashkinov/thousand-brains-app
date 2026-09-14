@@ -121,10 +121,44 @@ class GraphMatcherTest {
     }
 
     @Test
-    fun `partialMatchScore is zero when the candidate is longer than the stored model`() {
+    fun `an observation the stored model has no counterpart for at all drags the score down instead of forcing zero`() {
+        // "nodes" only knows about 2 of "longerPartial"'s 3 nodes; the 3rd is far
+        // enough away from anything stored that it can't be explained by this model
+        // at all -- it should count as evidence against the match, not disqualify
+        // the two genuinely good matches outright (the old behavior: any candidate
+        // longer than the stored model was an automatic, unconditional zero).
         val nodes = staircase().take(2)
         val longerPartial = staircase()
-        assertEquals(0f, GraphMatcher.partialMatchScore(modelOf(nodes), longerPartial), 1e-6f)
+        val score = GraphMatcher.partialMatchScore(modelOf(nodes), longerPartial)
+        assertTrue("expected a reduced but nonzero score but was $score", score in 0.01f..0.9f)
+    }
+
+    @Test
+    fun `one unexplained observation among several good matches keeps the score well below a full match`() {
+        // Mirrors the reported bug: 5 landmarks that genuinely belong to a taught
+        // city, plus 1 that belongs to no taught city at all, must not still read
+        // as a confident match for that city.
+        val stored =
+            modelOf(
+                listOf(
+                    node(0, 0f, 0f, PrimitiveFeature(label = "city-hall", angle = 0f, extent = 1f)),
+                    node(1, 1f, 0f, PrimitiveFeature(label = "bakery", angle = 0f, extent = 1f)),
+                    node(2, 2f, 0f, PrimitiveFeature(label = "town-hall", angle = 0f, extent = 1f)),
+                    node(3, 3f, 0f, PrimitiveFeature(label = "power-plant", angle = 0f, extent = 1f)),
+                    node(4, 4f, 0f, PrimitiveFeature(label = "school", angle = 0f, extent = 1f)),
+                ),
+            )
+        val fullMatchScore = GraphMatcher.partialMatchScore(stored, stored.nodes)
+
+        val observedWithOneForeignLandmark =
+            stored.nodes + node(5, 4f, 4f, PrimitiveFeature(label = "cinema", angle = 0f, extent = 1f))
+        val scoreWithForeignLandmark = GraphMatcher.partialMatchScore(stored, observedWithOneForeignLandmark)
+
+        assertTrue("expected a full match to score near 1.0 but was $fullMatchScore", fullMatchScore > 0.99f)
+        assertTrue(
+            "expected the foreign landmark to noticeably reduce the score: $scoreWithForeignLandmark vs $fullMatchScore",
+            scoreWithForeignLandmark < 0.85f,
+        )
     }
 
     @Test
