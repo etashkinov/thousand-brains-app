@@ -23,8 +23,8 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  *
  * Automates the "explore until recognized" loop end to end, per TBP's own
  * framing: an explorer who finds themselves in [environment] doesn't know
- * their own coordinate on arrival, so each episode starts at a random
- * location (not necessarily a discriminating one — see
+ * their own coordinate on arrival, so each episode defaults to starting at a
+ * random location (not necessarily a discriminating one — see
  * [GraphMatcher][com.eta.tbp.lib.memory.GraphMatcher]'s doc for why anchoring
  * can't assume the first thing observed is), then walks it block by block
  * from there — [environment]'s own [Environment.adjacentLocations], not a
@@ -58,6 +58,11 @@ import com.eta.tbp.lib.sensor.EnvironmentSensorModule
  * `update_ltm_from_stm` gate this mirrors. [evaluate] never writes to
  * [lm]'s memory, regardless of outcome; [train] always resolves to either
  * an existing object or a newly taught one, never a bare miss.
+ *
+ * Both default their `start` to [environment]'s own [Environment.randomLocation],
+ * per the framing above, but a caller that already knows where to place the
+ * explorer (e.g. a UI letting a person pick a starting cell before running
+ * either mode) can pass one explicitly instead.
  *
  * Every location [environment] can produce is a *candidate* to visit, not
  * just the ones bearing a feature: a real explorer doesn't know in advance
@@ -166,9 +171,9 @@ class Experiment(
     }
 
     /** Explores [environment] purely to check it against what's already known — never writes to [lm]'s memory, matching real Monty's EVALUATE behavior. */
-    fun evaluate(): Outcome {
+    fun evaluate(start: Location = environment.randomLocation()): Outcome {
         logger.info(TAG) { "evaluate() starting on $environment" }
-        val exploration = runEpisode(ExperimentMode.EVALUATE, environment.randomLocation())
+        val exploration = runEpisode(ExperimentMode.EVALUATE, start)
         val result = exploration.result
         val outcome =
             if (result is RecognitionResult.Recognized) {

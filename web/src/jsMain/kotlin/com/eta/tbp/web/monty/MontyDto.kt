@@ -10,12 +10,15 @@ data class LandmarkDto(
     val label: String,
 )
 
+/** [startRow]/[startCol] are both null when the user hasn't picked a start cell — the server then falls back to a random start, matching `Experiment.train`/`.evaluate`'s own defaults. */
 @Serializable
 data class ExperimentRequestDto(
     val mode: String,
     val cityName: String,
     val citySize: Int,
     val landmarks: List<LandmarkDto>,
+    val startRow: Int? = null,
+    val startCol: Int? = null,
 )
 
 /** [step] is this cell's 1-based position in the episode's visit order. */

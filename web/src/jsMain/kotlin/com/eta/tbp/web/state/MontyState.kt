@@ -52,10 +52,11 @@ class MontyState(
         )
     }
 
-    /** Runs a full train/evaluate [com.eta.tbp.lib.experiment.Experiment] episode over [map] — see `MontyService.runExperiment`'s doc. [mode] is `"EVALUATE"` or `"TRAIN"`. */
+    /** Runs a full train/evaluate [com.eta.tbp.lib.experiment.Experiment] episode over [map] — see `MontyService.runExperiment`'s doc. [mode] is `"EVALUATE"` or `"TRAIN"`. [start] is the row/col picked in the editor, or null to leave it to `Experiment`'s own random start. */
     fun runExperiment(
         mode: String,
         map: CityMap,
+        start: Pair<Int, Int>? = null,
     ) {
         loading = true
         error = null
@@ -66,6 +67,8 @@ class MontyState(
                 cityName = map.name.trim().ifEmpty { "Untitled city" },
                 citySize = map.size,
                 landmarks = map.landmarks.map { LandmarkDto(it.row, it.col, it.label) },
+                startRow = start?.first,
+                startCol = start?.second,
             )
         postExperiment(
             request,

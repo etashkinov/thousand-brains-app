@@ -98,8 +98,13 @@ private fun decodeExperimentRequest(json: JSONObject): ExperimentRequest {
         cityName = json.getString("cityName"),
         citySize = json.getInt("citySize"),
         landmarks = landmarks,
+        startRow = json.optIntOrNull("startRow"),
+        startCol = json.optIntOrNull("startCol"),
     )
 }
+
+/** `null` when [key] is absent/JSON `null`, rather than `org.json`'s own `optInt`, which folds a missing key into `0` — indistinguishable here from an explicit start at row/col 0. */
+private fun JSONObject.optIntOrNull(key: String): Int? = if (has(key) && !isNull(key)) getInt(key) else null
 
 private fun encodeMemory(snapshot: Map<String, List<GraphObjectModel>>): String {
     val objects = JSONArray()

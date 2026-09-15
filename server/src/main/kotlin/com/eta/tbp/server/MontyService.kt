@@ -23,11 +23,14 @@ data class GridCell(
     val step: Int,
 )
 
+/** [startRow]/[startCol] place the explorer at that cell instead of [Experiment]'s own default random start — both null (the web UI's "no selection made" state) falls back to random, matching [Experiment.train]/[Experiment.evaluate]'s own defaults. */
 data class ExperimentRequest(
     val mode: ExperimentMode,
     val cityName: String,
     val citySize: Int,
     val landmarks: List<LandmarkInput>,
+    val startRow: Int? = null,
+    val startCol: Int? = null,
 )
 
 data class ExperimentResult(
@@ -86,10 +89,16 @@ class MontyService(
             )
         experiment.loadState(memory)
 
+        val start =
+            if (request.startRow != null && request.startCol != null) {
+                FloatLocation(request.startRow.toFloat(), request.startCol.toFloat())
+            } else {
+                null
+            }
         val outcome =
             when (request.mode) {
-                ExperimentMode.TRAIN -> experiment.train(request.cityName)
-                ExperimentMode.EVALUATE -> experiment.evaluate()
+                ExperimentMode.TRAIN -> if (start != null) experiment.train(request.cityName, start) else experiment.train(request.cityName)
+                ExperimentMode.EVALUATE -> if (start != null) experiment.evaluate(start) else experiment.evaluate()
             }
 
         memory = experiment.state()

@@ -30,6 +30,9 @@ private const val LANDMARK_LABELS_LIST_ID = "landmark-labels"
  * recent Monty experiment's path, already scoped by the caller to the open draft
  * (see [com.eta.tbp.web.state.MontyState.lastResultMapId]'s doc) — maps each visited
  * cell to its 1-based step number, both to highlight and to number the cells it explored.
+ * Each cell also carries a 📍 toggle for [com.eta.tbp.web.state.AppState.startLocation] —
+ * where the next `Evaluate`/`Train` run (see `MontyPanel`) places the explorer, instead of
+ * `Experiment`'s own random start.
  */
 fun renderEditor(
     container: HTMLElement,
@@ -101,9 +104,15 @@ fun renderEditor(
                             span(classes = "grid-header") { +"$row" }
                             for (col in 0 until draft.size) {
                                 val step = visitedCells[row to col]
-                                div(classes = "cell-wrapper") {
+                                val isStart = state.startLocation == row to col
+                                div(classes = if (isStart) "cell-wrapper start" else "cell-wrapper") {
                                     if (step != null) {
                                         span(classes = "step-badge") { +"$step" }
+                                    }
+                                    button(classes = "start-toggle") {
+                                        attributes["title"] = if (isStart) "Clear start location" else "Set as start location"
+                                        onClickFunction = { state.setStartLocation(row, col) }
+                                        +"📍"
                                     }
                                     textInput(classes = if (step != null) "cell-input visited" else "cell-input") {
                                         list = LANDMARK_LABELS_LIST_ID

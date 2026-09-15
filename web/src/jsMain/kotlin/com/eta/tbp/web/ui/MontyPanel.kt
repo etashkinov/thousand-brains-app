@@ -42,17 +42,24 @@ fun renderMontyPanel(
             p(classes = "empty-hint") { +"Open a map to evaluate or train Monty on it." }
         } else {
             val cityName = draft.name.trim().ifEmpty { "Untitled city" }
+            val start = appState.startLocation
 
-            p(classes = "experiment-hint") { +"Explores $cityName's whole grid, in random order, until recognized." }
+            p(classes = "experiment-hint") {
+                +if (start == null) {
+                    "Explores $cityName's whole grid, from a random start, until recognized."
+                } else {
+                    "Explores $cityName's whole grid, starting at (${start.first}, ${start.second}), until recognized."
+                }
+            }
             div(classes = "experiment-actions") {
                 button(classes = "evaluate-button") {
                     disabled = montyState.loading
-                    onClickFunction = { montyState.runExperiment("EVALUATE", draft) }
+                    onClickFunction = { montyState.runExperiment("EVALUATE", draft, start) }
                     +"Evaluate"
                 }
                 button(classes = "train-button") {
                     disabled = montyState.loading
-                    onClickFunction = { montyState.runExperiment("TRAIN", draft) }
+                    onClickFunction = { montyState.runExperiment("TRAIN", draft, start) }
                     +"Train as \"$cityName\""
                 }
             }

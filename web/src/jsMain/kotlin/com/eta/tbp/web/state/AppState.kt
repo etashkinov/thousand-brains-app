@@ -24,9 +24,20 @@ class AppState(
     var editingExistingId: String? = null
         private set
 
+    /**
+     * Where to place the explorer for the next [MontyState.runExperiment] run on [draft] —
+     * `null` (the default) leaves it to `Experiment`'s own random start. Not part of
+     * [CityMap] itself: it's a per-run choice for whoever is at the keyboard right now, not
+     * a property of the map worth persisting to [MapStorage], so it resets with [draft]
+     * itself on every [startNew]/[edit]/[cancelEdit].
+     */
+    var startLocation: Pair<Int, Int>? = null
+        private set
+
     fun startNew() {
         draft = CityMap(id = MapStorage.newId(), name = "", size = DEFAULT_MAP_SIZE)
         editingExistingId = null
+        startLocation = null
         onChange()
     }
 
@@ -34,12 +45,14 @@ class AppState(
         val map = maps.find { it.id == id } ?: return
         draft = map
         editingExistingId = id
+        startLocation = null
         onChange()
     }
 
     fun cancelEdit() {
         draft = null
         editingExistingId = null
+        startLocation = null
         onChange()
     }
 
@@ -50,6 +63,16 @@ class AppState(
                 size = size,
                 landmarks = current.landmarks.filter { it.row < size && it.col < size },
             )
+        startLocation = startLocation?.takeIf { (row, col) -> row < size && col < size }
+        onChange()
+    }
+
+    /** Toggles [row]/[col] as [startLocation] — clicking the already-selected start cell clears the pick (back to a random start) rather than requiring a separate "clear" control. */
+    fun setStartLocation(
+        row: Int,
+        col: Int,
+    ) {
+        startLocation = (row to col).takeUnless { it == startLocation }
         onChange()
     }
 
