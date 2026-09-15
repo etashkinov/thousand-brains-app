@@ -53,7 +53,7 @@ fun suggestGoalLocation(
     memory: GraphMemory,
     tiedLabels: List<String>,
     observedNodes: List<GraphNode>,
-    checkedLocations: Set<Location>,
+    checkedLocations: Collection<Location>,
     positionTolerance: Float = 0.3f,
 ): Location? {
     if (tiedLabels.size < 2) return null

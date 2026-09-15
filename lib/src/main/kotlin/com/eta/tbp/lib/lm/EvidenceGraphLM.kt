@@ -16,109 +16,70 @@ import com.eta.tbp.lib.memory.edgeChainOf
  * Tier 2: builds a character's graph from the primitive stream coming from
  * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] and matches it against
  * every previously-taught [GraphObjectModel] in [memory]. Generic over the
- * node feature payload [F] — real Monty's own `EvidenceGraphLM` is one class
- * reused at every hierarchy level via constructor config, not type
- * branching; this class mirrors that shape. Today's app still has exactly
- * one real instantiation (`F = `[com.eta.tbp.lib.sensor.PrimitiveFeature],
- * wired up in `RecognizerViewModel`) — [com.eta.tbp.lib.lm.PrimitiveGraphLM]
- * (Tier 1) deliberately stays a separate, non-generic class; see
- * IMPLEMENTATION_PLAN.md's "why aren't PrimitiveGraphLM and (this class) one
- * shared EvidenceGraphLM" entry for why that merge was rejected and why
- * genericizing this class alone doesn't reopen it.
+ * node feature payload [F] the same way real Monty's own `EvidenceGraphLM`
+ * is reused at every hierarchy level via constructor config rather than
+ * type branching — today's app has exactly one instantiation
+ * (`F = `[com.eta.tbp.lib.sensor.PrimitiveFeature], wired up in
+ * `RecognizerViewModel`). [com.eta.tbp.lib.lm.PrimitiveGraphLM] (Tier 1)
+ * deliberately stays a separate, non-generic class — see
+ * IMPLEMENTATION_PLAN.md's "why aren't PrimitiveGraphLM and (this class)
+ * one shared EvidenceGraphLM" entry.
  *
- * "Episode" is one full character, same scoping as
- * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] — uniform across every
- * stage of the pipeline, matching real Monty's own episode boundary (see
- * IMPLEMENTATION_PLAN.md §3.6). A character may span several strokes:
- * [nodeBuffer] simply accumulates whatever primitives arrive between
- * [preEpisode] and [postEpisode], regardless of how many strokes that
- * spans — genuine cross-stroke compositional generalization is still an
- * explicitly deferred problem (see IMPLEMENTATION_PLAN.md's own "least
- * theoretically settled" caveat), but multi-stroke accumulation itself is
- * not.
+ * "Episode" is one full character, spanning however many strokes [visits]
+ * accumulates between [preEpisode] and [postEpisode] — the same boundary
+ * [com.eta.tbp.lib.sensor.PrimitiveSensorModule] uses, matching real
+ * Monty's own episode boundary (IMPLEMENTATION_PLAN.md §3.6).
+ * Cross-stroke compositional generalization is still an explicitly
+ * deferred problem; multi-stroke accumulation itself is not.
  *
- * Evidence accumulates live as primitives arrive (not just once the stroke
- * completes): each new primitive extends this episode's node buffer, and
- * [GraphMatcher.partialMatchScore] scores that growing shape against every
- * stored model.
- *
- * [nodeBuffer] itself keeps every observed node in strict visit order,
- * unconditionally, and [evidenceSnapshot] hands [GraphMatcher] that same
- * buffer as-is, unfiltered — an earlier version of this class instead
- * pre-filtered it down to nodes [GraphMemory.hasCompatibleFeature]
- * recognized *somewhere*, on the reasoning that a node nothing taught has
- * ever seen the like of "can't contribute positively to any model's score."
- * That was wrong: dropping it meant a city with a landmark nothing taught
- * has ever seen (a real, discriminating fact — it doesn't belong to
- * whatever's being explored) simply vanished from the comparison instead of
- * counting against every candidate it doesn't fit, letting a handful of
- * genuinely matching nodes plus one utterly foreign one still read as a
- * confident, unique match. [GraphMatcher.partialMatchScore] fixes this at
- * the source (see its own doc) by scoring every observed node — one with no
- * match anywhere in a given candidate now counts as evidence *against* that
- * candidate specifically, the way real Monty's own evidence accumulation
- * treats an out-of-range observation, rather than being discarded before
- * comparison or vetoing every candidate outright.
+ * Evidence accumulates live: each new primitive extends this episode's
+ * node history, and [GraphMatcher.partialMatchScore] scores that growing
+ * shape against every stored model. [evidenceSnapshot] passes
+ * [observedNodes] to the matcher unfiltered — an earlier version
+ * pre-filtered to nodes [GraphMemory.hasCompatibleFeature] recognized
+ * *somewhere*, which silently dropped genuinely discriminating evidence
+ * (an observation nothing taught has ever seen should count *against*
+ * every candidate, the way real Monty treats an out-of-range observation —
+ * not vanish from the comparison). Don't reintroduce that filter.
  *
  * [getOutput] mirrors real Monty's `get_output()`: a single-hypothesis
- * point estimate (the current best label + its confidence), structurally
- * identical to what a SensorModule would emit — never a full evidence map.
- * Monty puts multi-hypothesis evidence in an entirely separate mechanism
- * (`send_out_vote()`'s dict keyed by object id, not a `Message` at all),
- * not inside the uniform feed-forward message. The full evidence-by-label
- * breakdown this app's UI needs (live bars, tie detection) is exposed via
- * [evidenceSnapshot] instead — a direct query a caller makes, the same way
- * Monty's own logging/experiment harness reads an LM's internal hypothesis
- * state directly rather than through a `Message`.
+ * point estimate, never a full evidence map — Monty puts multi-hypothesis
+ * evidence in `send_out_vote()` instead, not the uniform feed-forward
+ * message. The full evidence-by-label breakdown this app's UI needs (live
+ * bars, tie detection) is exposed via [evidenceSnapshot] as a direct query
+ * instead, the same way Monty's own logging/experiment harness reads an
+ * LM's hypothesis state directly.
  *
- * Teaching is deliberately *not* part of the [LearningModule] interface:
- * Monty's own framework gets ground-truth labels from a labeled dataset,
- * but this app's v1 design is a human teaching by drawing + labeling, so
- * [teach] is this app's honest equivalent of that ground truth, not a
- * deviation from the port. It's still gated on [ExperimentMode] exactly the
- * way real Monty's own learning is: `GraphLM.update_ltm_from_stm()`
- * (`evidence_matching/learning_module.py`) only calls `_update_memory()`
- * `if self.mode is ExperimentMode.TRAIN` — an EVALUATE-mode episode that
- * ends in no match writes nothing to memory, full stop, rather than
- * inventing a label for whatever wasn't recognized. [mode] defaults to
- * TRAIN so every existing direct caller (a human teaching by drawing, or a
- * test that never touches [setExperimentMode]) keeps working unchanged;
- * only a caller that explicitly asks for EVALUATE (e.g.
- * [Experiment.evaluate]) gets the stricter
- * behavior.
+ * Teaching is deliberately not part of the [LearningModule] interface:
+ * Monty gets ground truth from a labeled dataset, but this app's v1 design
+ * is a human teaching by drawing + labeling, so [teach] is this app's
+ * equivalent of that ground truth. It's gated on [ExperimentMode] the way
+ * real Monty's `GraphLM.update_ltm_from_stm()` only writes memory
+ * `if self.mode is ExperimentMode.TRAIN`; [mode] defaults to TRAIN so
+ * every existing caller keeps working, and only a caller that explicitly
+ * requests EVALUATE (e.g. [Experiment.evaluate]) gets the stricter
+ * no-write behavior.
  *
- * [proposeGoal] is this class's own embedded Goal State Generator (mirrors
- * real Monty's `EvidenceGoalGenerator` — see [suggestGoalLocation]'s doc): a
- * third output channel alongside [getOutput]/[sendOutVote], not folded into
- * either, for whatever explores on this LM's behalf (e.g. [Experiment]) to
- * consult instead of choosing blindly. Its result travels as a [CmpGoal] —
- * real Monty's own `propose_goals()` returns `Goal` CMP messages, not a bare
- * location, and [MotorSystem] is what actually consumes it. Entirely a
- * function of this LM's own state — [memory] and what it's already
- * observed/checked — never anything about the domain under exploration
- * itself, which is exactly what keeps it generic over any
- * [Location]/[Feature] pair rather than tied to one caller's domain.
+ * [proposeGoal] is this class's own Goal State Generator (mirrors real
+ * Monty's `EvidenceGoalGenerator`; see [suggestGoalLocation]): a third
+ * output channel alongside [getOutput]/[sendOutVote], travelling as a
+ * [CmpGoal] the way real Monty's own `propose_goals()` does. A pure
+ * function of this LM's own state, which is what keeps it generic over
+ * any [Location]/[Feature] pair.
  *
- * [logger] defaults to [Logger.None] (silent) so no existing caller/test is
- * affected by adding it — pass [Logger.Console], or an `app`-side
- * implementation, to see this class's own events (nodes matched, episode
- * boundaries, teach outcomes, goal suggestions).
+ * [logger] defaults to [Logger.None] so adding it affected no existing
+ * caller; pass [Logger.Console] (or an `app`-side implementation) to see
+ * this class's events.
  *
- * [positionTolerance] is this LM's one configured answer to "how close is
- * close enough to be the same place" — set once at construction rather
- * than threaded through every call that needs it, the same way real
- * Monty's `EvidenceGoalGenerator.__init__` takes `goal_tolerances` as
- * constructor config, not a `propose_goals()` argument
- * (`goal_generation.py`). [proposeGoal] uses it directly, and [Explorer]
- * reads this same property (rather than holding its own copy) when it
- * needs the identical notion of "same place" for its own
- * `visited`-location bookkeeping — one source of truth instead of every
- * caller along the chain repeating (and risking disagreeing on) the same
- * value. This LM owns the value, not
- * [com.eta.tbp.lib.sensor.Environment]: how forgiving a comparison should
- * be is a property of the learning logic doing the comparing, not of the
- * world being explored — see [com.eta.tbp.lib.sensor.Environment.featureAt]'s
- * own doc for the same point made from the environment side.
+ * [positionTolerance] — "how close is close enough to be the same place"
+ * — is set once at construction the way real Monty's
+ * `EvidenceGoalGenerator.__init__` takes `goal_tolerances` as constructor
+ * config, not a per-call argument. [Explorer] reads this same property for
+ * its own `visited`-location bookkeeping rather than holding its own copy,
+ * so the two never disagree on what "same place" means. It lives on this
+ * LM rather than [com.eta.tbp.lib.sensor.Environment]: how forgiving a
+ * comparison should be is a property of the learning logic doing the
+ * comparing, not of the world being explored.
  */
 class EvidenceGraphLM(
     override val lmId: String,
@@ -127,113 +88,112 @@ class EvidenceGraphLM(
 ) : LearningModule<Map<String, List<GraphObjectModel>>> {
     /**
      * Owned and constructed here, not injected — mirrors real Monty's
-     * `EvidenceGraphLM.__init__` building its own `self.graph_memory`
-     * (`evidence_matching/learning_module.py`). A prior version of this
-     * class took a [GraphMemory] as a constructor parameter, built by
-     * whatever wired the LM up; that only existed to work around
-     * [Experiment] (then city-specific, `CityExperiment`) rebuilding its LM
-     * on every episode, and let a caller reach in and share one mutable [GraphMemory]
-     * across separate LM instances — [state]/[loadState] (already the
-     * `LearningModule` contract's own checkpoint mechanism, matching
-     * Monty's `state_dict` save/restore) is the correct way to move taught
-     * knowledge between instances instead.
+     * `EvidenceGraphLM.__init__` building its own `self.graph_memory`. A
+     * prior constructor-injected version only existed to let [Experiment]
+     * share one mutable [GraphMemory] across LM instances it rebuilds every
+     * episode; [state]/[loadState] (the `LearningModule` contract's own
+     * checkpoint mechanism, matching Monty's `state_dict` save/restore) is
+     * the correct way to move taught knowledge between instances instead.
      */
     private val memory = GraphMemory()
-    private val nodeBuffer = mutableListOf<GraphNode>()
 
     /**
-     * Declared as `LinkedHashSet` specifically, not `mutableSetOf()`
-     * (which returns one too, but as the widened `MutableSet` type — a
-     * caller reading that declaration has no way to tell iteration order
-     * means anything): `LinkedHashSet`'s own contract guarantees iteration
-     * order equals insertion order, so this one field serves both
-     * [checkedLocations] (fast membership testing — order doesn't matter)
-     * and [checkedLocationsInOrder] (the path this episode actually took —
-     * order is the entire point) with nothing to keep in sync.
+     * One location this episode's [matchingStep] actually checked, in
+     * visit order — [feature] is what was observed there, or `null` for a
+     * featureless cell. No [GraphNode]/id stored here: [observedNodes]
+     * reconstructs one for every feature-bearing [Visit] on demand, cheap
+     * at this app's scale.
+     *
+     * [decision] is what [recordObservationDecision] concluded from this
+     * visit (null until that runs; permanently null for a featureless
+     * visit). [goalDecision] is a goal [proposeGoal] announced right after
+     * this visit, before the next one happened. Together these replace a
+     * separate flat decision log: every decision is already about a
+     * specific visit (its own, or the one immediately before it), so
+     * nothing a parallel list would capture is missing here.
      */
-    private val checkedLocations = LinkedHashSet<Location>()
+    private class Visit(
+        val location: Location,
+        val feature: Feature?,
+    ) {
+        var decision: LmDecision? = null
+        var goalDecision: LmDecision? = null
+    }
+
+    private val visits = mutableListOf<Visit>()
     private var lastCompletedNodes: List<GraphNode>? = null
     private var mode = ExperimentMode.TRAIN
 
-    /** See [decisionLog]'s own doc. Cleared in [preEpisode], same as [nodeBuffer]/[checkedLocations]. */
-    private val decisions = mutableListOf<LmDecision>()
-
-    /** Every location an actual observation (not a goal proposal — see [hypothesisStateAt]'s own doc) left this LM in, keyed by that [Location] — cleared in [preEpisode] alongside [decisions]. */
-    private val locationStates = LinkedHashMap<Location, HypothesisState>()
-
-    /** The last [CmpGoal.location] a decision was already logged for — [proposeGoal] recomputes a goal every step while still [RecognitionResult.Ambiguous] (see [Explorer.explore]'s own loop), but [MotorSystem] only ever walks one unvisited step toward it at a time, so re-logging the identical "heading toward" decision on every one of those intermediate steps would just repeat itself until the goal changes or is reached. */
-    private var lastLoggedGoalLocation: Location? = null
-
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
-            // .add()'s own return value: false means this location was already checked earlier this
-            // episode — e.g. a motor system backtracking through an already-walked cell to reach a
-            // dead end's way around (see Explorer/MotorSystem's own docs). Re-adding its node to
-            // nodeBuffer would double-count the same real observation as if it were two, inflating
-            // evidence for whatever it matches without anything new actually having been seen.
-            val isNewLocation = message.location?.let { checkedLocations.add(it) } ?: false
-            if (!message.passMessage || !isNewLocation) continue
-            val previousPossible = possibleMatches()
-            val node = toGraphNode(message)
-            nodeBuffer.add(node)
-            logger.debug(TAG) { "[$lmId] node ${node.id}: '${node.feature.label}' at ${node.location}" }
-            recordObservationDecision(node, previousPossible)
+            val location = message.location ?: continue
+            // A plain linear scan, not a Set — episodes stay small (see GraphMatcher's own doc
+            // for the same call made about node lookups). A location already in visits means a
+            // motor system backtracking through an already-walked cell (see Explorer/MotorSystem);
+            // recording it again would double-count the same observation.
+            if (visits.any { it.location == location }) continue
+            if (!message.passMessage) {
+                visits += Visit(location, feature = null)
+                continue
+            }
+            val feature = requireNotNull(message.feature) { "Messages fed into matchingStep must carry a feature" }
+            val previousPossible = currentPossibleMatches()
+            val visit = Visit(location, feature)
+            visits += visit
+            logger.debug(TAG) { "[$lmId] observed '${feature.label}' at $location" }
+            recordObservationDecision(visit, previousPossible)
         }
     }
 
     /**
-     * Turns this newly-added [node] into one or more [LmDecision]s, comparing
-     * [possibleMatches] right before and after it joined [nodeBuffer] — the
-     * same evidence-threshold transition real Monty's own
-     * `_threshold_possible_matches` recomputes every step
+     * Turns this newly-recorded [visit] into its own [LmDecision], by
+     * comparing [currentPossibleMatches] right before and after its
+     * feature joined evidence — the same evidence-threshold transition
+     * real Monty's own `_threshold_possible_matches` recomputes every step
      * (`evidence_matching/learning_module.py`), just captured as data (see
-     * [decisionLog]'s own doc) instead of only a debug log line. Always logs
-     * one "what did this observation confirm" summary, plus a separate
-     * [LmDecision] per label that was still possible before [node] but isn't
-     * anymore — real Monty's own evidence accumulation can drop several
-     * hypotheses off `possible_matches` in a single step (an observation that
-     * fits none of them is evidence against all of them at once, per
-     * [com.eta.tbp.lib.memory.GraphMatcher]'s own class doc), so this can add
-     * more than one discard [LmDecision] for a single [node].
+     * [decisionLog]) instead of only a debug log line.
      */
     private fun recordObservationDecision(
-        node: GraphNode,
+        visit: Visit,
         previousPossible: List<String>,
     ) {
-        val newPossible = possibleMatches()
-        val discarded = previousPossible - newPossible.toSet()
-        val state = hypothesisStateOf(newPossible)
-        val summary =
-            when {
-                previousPossible.isEmpty() && newPossible.isEmpty() ->
-                    "'${node.feature.label}' doesn't match anything taught yet."
-                previousPossible.isEmpty() && newPossible.size == 1 ->
-                    "'${node.feature.label}' is a known location for '${newPossible.single()}'."
-                previousPossible.isEmpty() ->
-                    "'${node.feature.label}' could belong to ${newPossible.joinToString()}."
-                newPossible.isEmpty() ->
-                    "'${node.feature.label}' isn't confirmed by anything still possible."
-                newPossible.size == 1 && discarded.isNotEmpty() ->
-                    "'${node.feature.label}' confirms '${newPossible.single()}'."
-                discarded.isEmpty() ->
-                    "'${node.feature.label}' still consistent with ${newPossible.joinToString()}."
-                else ->
-                    "'${node.feature.label}' narrows it down to ${newPossible.joinToString()}."
-            }
-        locationStates[node.location] = state
-        addDecision(node.location, summary, state)
-        discarded.forEach { label ->
-            addDecision(node.location, "Hypothesis discarded: '$label' no longer explains what's been observed.", state)
-        }
+        val feature = requireNotNull(visit.feature) { "recordObservationDecision requires a featured visit" }
+        val newPossible = currentPossibleMatches()
+        val message = describeObservation(feature, previousPossible, newPossible)
+        visit.decision = LmDecision(location = visit.location, message = message, state = hypothesisStateOf(newPossible))
+        logger.debug(TAG) { "[$lmId] decision: $message" }
     }
 
-    private fun addDecision(
-        location: Location?,
-        message: String,
-        state: HypothesisState,
-    ) {
-        decisions += LmDecision(step = decisions.size + 1, location = location, message = message, state = state)
-        logger.debug(TAG) { "[$lmId] decision: $message" }
+    /**
+     * Phrases what [feature] just did to the hypothesis set, from
+     * [previousPossible] to [newPossible]. One observation is one
+     * sentence even when it rules out several hypotheses at once: real
+     * Monty's own evidence accumulation can drop several hypotheses off
+     * `possible_matches` in a single step (an observation that fits none
+     * of them is evidence against all of them at once, per
+     * [com.eta.tbp.lib.memory.GraphMatcher]'s own class doc), so any
+     * labels just ruled out are folded into this same sentence's
+     * "Rules out ..." suffix rather than getting a decision of their own.
+     */
+    private fun describeObservation(
+        feature: Feature,
+        previousPossible: List<String>,
+        newPossible: List<String>,
+    ): String {
+        val discarded = previousPossible - newPossible.toSet()
+        // Order-sensitive: each branch's condition assumes every earlier, more specific one already failed.
+        val summary =
+            when {
+                previousPossible.isEmpty() && newPossible.isEmpty() -> "'${feature.label}' doesn't match anything taught yet."
+                previousPossible.isEmpty() && newPossible.size == 1 ->
+                    "'${feature.label}' is a known location for '${newPossible.single()}'."
+                previousPossible.isEmpty() -> "'${feature.label}' could belong to ${newPossible.joinToString()}."
+                newPossible.isEmpty() -> "'${feature.label}' isn't confirmed by anything still possible."
+                newPossible.size == 1 && discarded.isNotEmpty() -> "'${feature.label}' confirms '${newPossible.single()}'."
+                discarded.isEmpty() -> "'${feature.label}' still consistent with ${newPossible.joinToString()}."
+                else -> "'${feature.label}' narrows it down to ${newPossible.joinToString()}."
+            }
+        return if (discarded.isEmpty()) summary else "$summary Rules out ${discarded.joinToString()}."
     }
 
     override fun receiveVotes(votes: List<Any>) {
@@ -262,75 +222,82 @@ class EvidenceGraphLM(
      * yet this episode or nothing's been taught.
      */
     fun evidenceSnapshot(): Map<String, Float> {
-        if (nodeBuffer.isEmpty()) return emptyMap()
+        val nodes = observedNodes()
+        if (nodes.isEmpty()) return emptyMap()
         return memory.allLabels().associateWith { label ->
-            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodeBuffer) }
+            memory.candidatesForLabel(label).maxOf { stored -> GraphMatcher.partialMatchScore(stored, nodes) }
         }
     }
 
     /**
-     * This episode's reasoning trail so far, in the order it happened — see
-     * [LmDecision]'s own doc for why this exists as structured data
-     * alongside [logger]'s free-form debug output, and
-     * [recordObservationDecision]/[proposeGoal] for what generates each
-     * entry. Safe to call mid-episode (e.g. after every [matchingStep], the
-     * way [Explorer.visit] calls it), not just after [postEpisode].
+     * This episode's reasoning trail, in order — see [LmDecision] for why
+     * this exists as structured data alongside [logger]'s free-form debug
+     * output. Each [Visit] contributes its [Visit.decision] (if any)
+     * followed by its [Visit.goalDecision] (if any) — since both are only
+     * ever set in that relative order (see [Visit]'s own doc), this
+     * reproduces true chronological order without a separate log or step
+     * counter. Safe to call mid-episode, not just after [postEpisode].
      */
-    fun decisionLog(): List<LmDecision> = decisions.toList()
+    fun decisionLog(): List<LmDecision> = visits.flatMap { listOfNotNull(it.decision, it.goalDecision) }
+
+    /** Every [visits] location, in the order [matchingStep] actually checked it — for a caller that wants to number/replay the path an episode took (e.g. step numbers on a map). */
+    fun checkedLocationsInOrder(): List<Location> = visits.map { it.location }
 
     /**
-     * The [HypothesisState] left behind by the actual observation made at
-     * [location] — null for a location [matchingStep] never fed a real
-     * observation for, whether because it was never visited or because it
-     * was featureless (skipped before ever reaching [recordObservationDecision];
-     * see [matchingStep]'s own doc). Deliberately excludes [proposeGoal]'s
-     * own decisions: those name where the LM wants to look *next*, not what
-     * an observation already found there, so a location that was only ever
-     * a goal *suggestion* (never actually reached, or reached without this
-     * exact [Location] matching within [positionTolerance]) must not read as
-     * "observed" here. [Explorer.visitedLocationsWithState] is the intended
-     * caller — carrying this forward across the featureless gaps
-     * [checkedLocationsInOrder] can still contain.
+     * [checkedLocationsInOrder], each paired with the [HypothesisState]
+     * this episode held right after that visit. A featureless [Visit] has
+     * no [Visit.decision] of its own, so it carries forward whatever the
+     * last real observation left behind — every visited location gets a
+     * state to show (e.g. coloring a UI's walked path), not just the ones
+     * that bore a feature. Starts at [HypothesisState.NoMatch].
      */
-    fun hypothesisStateAt(location: Location): HypothesisState? = locationStates[location]
-
-    /** [checkedLocations], but as the sequence they were actually visited in — see that field's own doc for why `LinkedHashSet` makes this safe to read straight off it. For a caller that wants to number/replay the path an episode took (e.g. step numbers on a map), not membership testing (which is what [checkedLocations] itself is for). */
-    fun checkedLocationsInOrder(): List<Location> = checkedLocations.toList()
+    fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> {
+        var current: HypothesisState = HypothesisState.NoMatch
+        return visits.map { visit ->
+            visit.decision?.state?.let { current = it }
+            visit.location to current
+        }
+    }
 
     /**
      * A [CmpGoal] proposing where to look next to tell the currently tied
-     * hypotheses apart — see [suggestGoalLocation]'s own doc for the
-     * underlying geometry, and real Monty's `propose_goals()` pipeline this
-     * mirrors: a separate output channel from [getOutput], not folded into
-     * its `CmpMessage` (real Monty keeps movement guidance out of
-     * `get_output()`/`send_out_vote()` too), and sent as [SenderType.GSG]
-     * rather than this LM's own [SenderType.LM] — the same
-     * `sender_type="GSG"` real Monty's `EvidenceGoalGenerator` uses when it
-     * builds a `Goal` on this LM's behalf. Null whenever there's nothing to
-     * disambiguate — not [RecognitionResult.Ambiguous] yet, or nothing left
-     * unchecked to suggest — in which case the caller ([MotorSystem]) should
-     * fall back to its own default exploration policy (e.g. a random
-     * unchecked location), the same way real Monty falls back to a naive
-     * policy when goal-driven actions are off.
+     * hypotheses apart — see [suggestGoalLocation] for the underlying
+     * geometry. A separate output channel from [getOutput] (real Monty
+     * keeps movement guidance out of `get_output()`/`send_out_vote()` too),
+     * sent as [SenderType.GSG] rather than this LM's own [SenderType.LM],
+     * matching real Monty's `EvidenceGoalGenerator`. Null whenever there's
+     * nothing to disambiguate, in which case the caller ([MotorSystem])
+     * should fall back to its own default exploration policy.
      *
-     * This LM's own configured [positionTolerance] is forwarded to
-     * [suggestGoalLocation]'s [checkedLocations] check — see the class doc
-     * for why that value lives on the constructor rather than as a
-     * parameter here.
+     * [MotorSystem] only ever walks one unvisited step per call, so this
+     * fires again on every intermediate step toward the same still-tied
+     * goal; a new [LmDecision] is only recorded when the goal has actually
+     * changed since the last one this log holds (found by scanning back
+     * for the most recent [Visit.goalDecision], which need not be on the
+     * immediately preceding [Visit]). [visits] is guaranteed non-empty
+     * here: reaching [RecognitionResult.Ambiguous] already required at
+     * least one observation.
      */
     fun proposeGoal(): CmpGoal? {
         val result = recognitionResult()
         if (result !is RecognitionResult.Ambiguous) return null
         val location =
-            suggestGoalLocation(memory, result.labels, nodeBuffer, checkedLocations, positionTolerance) ?: return null
+            suggestGoalLocation(
+                memory = memory,
+                tiedLabels = result.labels,
+                observedNodes = observedNodes(),
+                checkedLocations = visits.map { it.location },
+                positionTolerance = positionTolerance,
+            ) ?: return null
         logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
-        if (location != lastLoggedGoalLocation) {
-            addDecision(
-                location,
-                "Still tied between ${result.labels.joinToString()} — heading there to tell them apart.",
-                HypothesisState.Tied(result.labels),
-            )
-            lastLoggedGoalLocation = location
+        val lastGoal = visits.lastOrNull { it.goalDecision != null }?.goalDecision
+        if (lastGoal?.location != location) {
+            visits.lastOrNull()?.goalDecision =
+                LmDecision(
+                    location = location,
+                    message = "Still tied between ${result.labels.joinToString()} — heading there to tell them apart.",
+                    state = HypothesisState.Tied(result.labels),
+                )
         }
         return CmpGoal(
             location = location,
@@ -346,19 +313,16 @@ class EvidenceGraphLM(
     }
 
     override fun preEpisode() {
-        nodeBuffer.clear()
-        checkedLocations.clear()
-        decisions.clear()
-        locationStates.clear()
-        lastLoggedGoalLocation = null
+        visits.clear()
         logger.debug(TAG) { "[$lmId] episode started" }
     }
 
     override fun postEpisode() {
-        if (nodeBuffer.isNotEmpty()) {
-            lastCompletedNodes = nodeBuffer.toList()
+        val nodes = observedNodes()
+        if (nodes.isNotEmpty()) {
+            lastCompletedNodes = nodes
         }
-        logger.debug(TAG) { "[$lmId] episode ended with ${nodeBuffer.size} node(s) observed" }
+        logger.debug(TAG) { "[$lmId] episode ended with ${nodes.size} node(s) observed" }
     }
 
     override fun setExperimentMode(mode: ExperimentMode) {
@@ -385,30 +349,27 @@ class EvidenceGraphLM(
         logger.info(TAG) { "[$lmId] taught '$label' from ${nodes.size} node(s)" }
     }
 
-    /** Labels within [xPercentThreshold]% of the max evidence — see the top-level [possibleMatches] this delegates to. */
-    fun possibleMatches(xPercentThreshold: Float = 10f): List<String> = possibleMatches(evidenceSnapshot(), xPercentThreshold)
+    /** Labels within [xPercentThreshold]% of the max evidence — delegates to the top-level [possibleMatches]. Named to avoid shadowing that top-level function. */
+    private fun currentPossibleMatches(xPercentThreshold: Float = 10f): List<String> =
+        possibleMatches(evidenceSnapshot(), xPercentThreshold)
 
     /**
-     * Combines [possibleMatches] and [evidenceSnapshot] into the three-way UI
-     * decision — see the top-level [recognitionResult]. Downgrades a would-be
-     * [RecognitionResult.Recognized] to [RecognitionResult.Unknown] ("nothing
-     * settled yet, keep exploring" — indistinguishable from genuine
-     * [RecognitionResult.Unknown] to [Explorer.explore]'s own loop, which
-     * treats anything but [RecognitionResult.Recognized] as "keep going")
-     * while fewer than [MIN_OBSERVATIONS] nodes have been observed this
-     * episode: mirrors real Monty's own terminal-state gating, which never
-     * even checks whether an episode is done until `min_eval_steps`/
-     * `min_train_steps` have elapsed (`monty_base.py`) — otherwise a *single*
-     * lucky matching node, with only one object ever taught to compare
-     * against, would trivially be "the unique match" on its own. Scaled way
-     * down from Monty's own default (`min_eval_steps: 20`, tuned for
-     * point clouds with hundreds of points) to fit graphs this app's domains
-     * actually have (a character's handful of primitives, a city's handful
-     * of landmarks) — see [MIN_OBSERVATIONS]'s own doc.
+     * Combines [currentPossibleMatches] and [evidenceSnapshot] into the
+     * three-way UI decision — see the top-level [recognitionResult].
+     * Downgrades a would-be [RecognitionResult.Recognized] to
+     * [RecognitionResult.Unknown] while fewer than [MIN_OBSERVATIONS]
+     * nodes have been observed this episode, mirroring real Monty's own
+     * terminal-state gating (never checks whether an episode is done
+     * until `min_eval_steps`/`min_train_steps` have elapsed) — otherwise a
+     * single lucky matching node, with only one object ever taught to
+     * compare against, would trivially be "the unique match". Scaled down
+     * from Monty's own default (`min_eval_steps: 20`) to fit graphs this
+     * app's domains actually have — see [MIN_OBSERVATIONS].
      */
     fun recognitionResult(): RecognitionResult {
         val result = recognitionResult(evidenceSnapshot())
-        if (result is RecognitionResult.Recognized && nodeBuffer.size < minObservationsToRecognize(result.label)) {
+        val observedNodeCount = visits.count { it.feature != null }
+        if (result is RecognitionResult.Recognized && observedNodeCount < minObservationsToRecognize(result.label)) {
             return RecognitionResult.Unknown
         }
         return result
@@ -426,11 +387,15 @@ class EvidenceGraphLM(
         return minOf(MIN_OBSERVATIONS, smallestVariantSize)
     }
 
-    private fun toGraphNode(message: CmpMessage): GraphNode {
-        val location = requireNotNull(message.location) { "Messages fed into matchingStep must carry a location" }
-        val feature = requireNotNull(message.feature) { "Messages fed into matchingStep must carry a feature" }
-        return GraphNode(id = nodeBuffer.size, location = location, feature = feature)
-    }
+    /**
+     * A [GraphNode] for every feature-bearing [visits] entry, in visit
+     * order. [GraphNode.id] is that visit's own index into [visits] —
+     * unique and monotonic, which is all [GraphNode.equals]/[edgeChainOf]
+     * need, even though a featureless visit interleaved between two
+     * observations means the ids used here skip around.
+     */
+    private fun observedNodes(): List<GraphNode> =
+        visits.withIndex().mapNotNull { (index, visit) -> visit.feature?.let { GraphNode(index, visit.location, it) } }
 
     private companion object {
         const val TAG = "EvidenceGraphLM"

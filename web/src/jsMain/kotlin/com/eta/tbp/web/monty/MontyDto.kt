@@ -30,12 +30,12 @@ data class GridCellDto(
     val state: String,
 )
 
-/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal naming somewhere not yet visited) — mirrors `LmDecision.location`'s own doc. [state] — see [GridCellDto.state]'s own doc. */
+/** [step] is this decision's 1-based position in the LM's own reasoning trail. [state] — see [GridCellDto.state]'s own doc. */
 @Serializable
 data class DecisionEntryDto(
     val step: Int,
-    val row: Int? = null,
-    val col: Int? = null,
+    val row: Int,
+    val col: Int,
     val message: String,
     val state: String,
 )

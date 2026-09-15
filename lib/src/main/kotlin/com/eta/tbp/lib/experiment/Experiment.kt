@@ -193,13 +193,10 @@ class Experiment(
     /** Loads previously taught objects (from [state]) into [lm]. */
     fun loadState(state: Map<String, List<GraphObjectModel>>) = lm.loadState(state)
 
-    /** [visitedLocations], in the order that episode actually walked them — a direct passthrough to [Explorer.checkedLocationsInOrder], for numbering/replaying the path (e.g. step numbers on a map) rather than just testing membership. */
-    fun visitedLocationsInOrder(): List<Location> = explorer.checkedLocationsInOrder()
-
-    /** The just-run episode's step-by-step reasoning — a direct passthrough to [Explorer.decisionLog], for a UI to show alongside [visitedLocationsInOrder] why the outcome came out the way it did. */
+    /** The just-run episode's step-by-step reasoning — a direct passthrough to [Explorer.decisionLog], for a UI to show alongside [visitedLocationsWithState] why the outcome came out the way it did. */
     fun decisionLog(): List<LmDecision> = explorer.decisionLog()
 
-    /** [visitedLocationsInOrder], each paired with the [HypothesisState] the LM held right after that visit — a direct passthrough to [Explorer.visitedLocationsWithState], for a UI coloring the whole walked path by belief-at-the-time rather than just marking which cells were visited. */
+    /** Every location this episode visited, in visit order, each paired with the [HypothesisState] the LM held right after that visit — a direct passthrough to [Explorer.visitedLocationsWithState], for a UI coloring the whole walked path by belief-at-the-time (or just testing "was everything visited", via `.map { it.first }`) rather than only marking which cells were visited. */
     fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> = explorer.visitedLocationsWithState()
 
     /**

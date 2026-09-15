@@ -80,7 +80,7 @@ class EvidenceGraphLMTest {
     fun `possibleMatches and recognitionResult are Unknown before anything is taught or drawn`() {
         val evidenceGraphLM = newLm()
 
-        assertTrue(evidenceGraphLM.possibleMatches().isEmpty())
+        assertTrue(possibleMatches(evidenceGraphLM.evidenceSnapshot()).isEmpty())
         assertEquals(RecognitionResult.Unknown, evidenceGraphLM.recognitionResult())
     }
 
@@ -98,7 +98,7 @@ class EvidenceGraphLMTest {
         drive(evidenceGraphLM, lShape(originX = 50f, originY = -20f))
         val evidence = evidenceGraphLM.evidenceSnapshot()
 
-        assertEquals(listOf("L"), evidenceGraphLM.possibleMatches())
+        assertEquals(listOf("L"), possibleMatches(evidenceGraphLM.evidenceSnapshot()))
         assertEquals(RecognitionResult.Recognized("L", evidence.getValue("L")), evidenceGraphLM.recognitionResult())
     }
 
@@ -113,7 +113,7 @@ class EvidenceGraphLMTest {
 
         drive(evidenceGraphLM, lShape(originX = -30f, originY = 5f))
 
-        assertEquals(setOf("L", "L2"), evidenceGraphLM.possibleMatches().toSet())
+        assertEquals(setOf("L", "L2"), possibleMatches(evidenceGraphLM.evidenceSnapshot()).toSet())
         val result = evidenceGraphLM.recognitionResult()
         assertTrue("expected Ambiguous but was $result", result is RecognitionResult.Ambiguous)
         assertEquals(setOf("L", "L2"), (result as RecognitionResult.Ambiguous).labels.toSet())
@@ -162,11 +162,11 @@ class EvidenceGraphLMTest {
         evidenceGraphLM.preEpisode()
         evidenceGraphLM.matchingStep(listOf(message(10f, 10f, "line")))
         // One "line"-labeled node alone is consistent with both taught shapes.
-        assertEquals(setOf("line", "L"), evidenceGraphLM.possibleMatches().toSet())
+        assertEquals(setOf("line", "L"), possibleMatches(evidenceGraphLM.evidenceSnapshot()).toSet())
 
         evidenceGraphLM.matchingStep(listOf(message(10f, 11f, "line")))
         // A second "line" node at the L's own relative offset only continues to fit "L".
-        assertEquals(listOf("L"), evidenceGraphLM.possibleMatches())
+        assertEquals(listOf("L"), possibleMatches(evidenceGraphLM.evidenceSnapshot()))
     }
 
     @Test
@@ -181,7 +181,7 @@ class EvidenceGraphLMTest {
         evidenceGraphLM.matchingStep(listOf(message(500f, 500f, "totally-novel-shape")))
         evidenceGraphLM.matchingStep(lineShape(originX = 40f, originY = 40f))
 
-        assertEquals(listOf("line"), evidenceGraphLM.possibleMatches())
+        assertEquals(listOf("line"), possibleMatches(evidenceGraphLM.evidenceSnapshot()))
     }
 
     @Test

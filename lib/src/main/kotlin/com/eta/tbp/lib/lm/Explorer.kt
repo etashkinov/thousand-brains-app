@@ -102,30 +102,11 @@ class Explorer(
     /** The full evidence breakdown across every taught label — for direct introspection, same spirit as [EvidenceGraphLM.evidenceSnapshot]. */
     fun evidenceSnapshot(): Map<String, Float> = lm.evidenceSnapshot()
 
-    /** [checkedLocations], in the order [visit] actually walked them — a direct passthrough to [EvidenceGraphLM.checkedLocationsInOrder]. */
-    fun checkedLocationsInOrder(): List<Location> = lm.checkedLocationsInOrder()
-
     /** This episode's step-by-step reasoning so far — a direct passthrough to [EvidenceGraphLM.decisionLog], for a caller (e.g. [com.eta.tbp.lib.experiment.Experiment]) that wants to show why [explore] ended up where it did, not just the path it walked. */
     fun decisionLog(): List<LmDecision> = lm.decisionLog()
 
-    /**
-     * [checkedLocationsInOrder], each paired with the [HypothesisState] the
-     * LM held right after that visit. A featureless cell contributes no
-     * observation of its own (see [EvidenceGraphLM.hypothesisStateAt]'s own
-     * doc), so it carries forward whatever the last real observation left
-     * behind — every visited location gets a state to show (e.g. for
-     * coloring a UI's walked path), not just the ones that happened to bear
-     * a feature. Starts at [HypothesisState.NoMatch] before the first real
-     * observation, the same "nothing found yet" reading [HypothesisState.NoMatch]
-     * gives an empty [EvidenceGraphLM.possibleMatches] anywhere else.
-     */
-    fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> {
-        var current: HypothesisState = HypothesisState.NoMatch
-        return lm.checkedLocationsInOrder().map { location ->
-            lm.hypothesisStateAt(location)?.let { current = it }
-            location to current
-        }
-    }
+    /** [checkedLocationsInOrder], each paired with the [HypothesisState] the LM held right after that visit — a direct passthrough to [EvidenceGraphLM.visitedLocationsWithState]. */
+    fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> = lm.visitedLocationsWithState()
 
     /**
      * A live look at the recognition state so far this exploration —

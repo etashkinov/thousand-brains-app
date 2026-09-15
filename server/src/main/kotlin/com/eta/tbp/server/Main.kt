@@ -140,8 +140,8 @@ private fun encodeExperimentResult(result: ExperimentResult): String {
         decisionsJson.put(
             JSONObject()
                 .put("step", decision.step)
-                .putOpt("row", decision.row)
-                .putOpt("col", decision.col)
+                .put("row", decision.row)
+                .put("col", decision.col)
                 .put("message", decision.message)
                 .put("state", decision.state),
         )

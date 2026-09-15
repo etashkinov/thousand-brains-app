@@ -17,7 +17,7 @@ data class LandmarkInput(
     val label: String,
 )
 
-/** [step] is this cell's 1-based position in the episode's visit order — see `Experiment.visitedLocationsInOrder`. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
+/** [step] is this cell's 1-based position in the episode's visit order — see `Experiment.visitedLocationsWithState`. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
 data class GridCell(
     val row: Int,
     val col: Int,
@@ -25,11 +25,11 @@ data class GridCell(
     val state: String,
 )
 
-/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal) — see `LmDecision.location`'s own doc. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
+/** [step] is this decision's 1-based position in [Experiment.decisionLog]'s own order. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
 data class DecisionEntry(
     val step: Int,
-    val row: Int?,
-    val col: Int?,
+    val row: Int,
+    val col: Int,
     val message: String,
     val state: String,
 )
@@ -134,15 +134,16 @@ class MontyService(
                 }
             }
         val decisions =
-            experiment.decisionLog().map { decision ->
-                val location = decision.location as? FloatLocation
-                DecisionEntry(
-                    step = decision.step,
-                    row = location?.location?.getOrNull(0)?.toInt(),
-                    col = location?.location?.getOrNull(1)?.toInt(),
-                    message = decision.message,
-                    state = encodeHypothesisState(decision.state),
-                )
+            experiment.decisionLog().mapIndexedNotNull { index, decision ->
+                (decision.location as? FloatLocation)?.let {
+                    DecisionEntry(
+                        step = index + 1,
+                        row = it.location[0].toInt(),
+                        col = it.location[1].toInt(),
+                        message = decision.message,
+                        state = encodeHypothesisState(decision.state),
+                    )
+                }
             }
 
         return when (outcome) {

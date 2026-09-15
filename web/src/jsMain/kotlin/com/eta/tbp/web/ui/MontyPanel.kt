@@ -89,9 +89,7 @@ fun renderMontyPanel(
                 ol(classes = "decision-log") {
                     for (decision in lastResult.decisions) {
                         li(classes = "decision-item") {
-                            if (decision.row != null && decision.col != null) {
-                                span(classes = "decision-location") { +"(${decision.row}, ${decision.col})" }
-                            }
+                            span(classes = "decision-location") { +"(${decision.row}, ${decision.col})" }
                             span(classes = "decision-message ${hypothesisStateClass(decision.state)}") { +decision.message }
                         }
                     }

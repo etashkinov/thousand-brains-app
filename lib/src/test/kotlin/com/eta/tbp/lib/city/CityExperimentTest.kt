@@ -69,7 +69,7 @@ class CityExperimentTest {
         // Every cell of the 10x10 grid was visited at least once -- not necessarily exactly
         // 100 *steps* any more, since a block-by-block walk can double back over already-walked
         // ground to reach a new block (see Explorer.explore's own doc on backtracking).
-        assertEquals(100, experiment.visitedLocationsInOrder().toSet().size)
+        assertEquals(100, experiment.visitedLocationsWithState().map { it.first }.toSet().size)
         assertTrue(outcome.locationsVisited >= 100)
         assertEquals(setOf("Springfield"), experiment.state().keys)
         // Exactly springfield()'s own 3 landmarks -- not more: backtracking over an
@@ -92,7 +92,7 @@ class CityExperimentTest {
         val outcome = experiment.evaluate()
 
         assertTrue("expected NoMatch but was $outcome", outcome is Experiment.Outcome.NoMatch)
-        assertEquals(100, experiment.visitedLocationsInOrder().toSet().size)
+        assertEquals(100, experiment.visitedLocationsWithState().map { it.first }.toSet().size)
         assertTrue((outcome as Experiment.Outcome.NoMatch).locationsVisited >= 100)
         assertEquals(emptySet<String>(), experiment.state().keys)
     }
