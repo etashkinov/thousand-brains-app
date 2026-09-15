@@ -9,7 +9,7 @@ interface SensorModule {
 
     fun step(
         environment: Environment,
-        observation: Location,
+        location: Location,
     ): CmpMessage
 
     fun preEpisode()
