@@ -2,6 +2,7 @@ package com.eta.tbp.web.ui
 
 import com.eta.tbp.web.model.MAX_MAP_SIZE
 import com.eta.tbp.web.model.MIN_MAP_SIZE
+import com.eta.tbp.web.monty.hypothesisStateClass
 import com.eta.tbp.web.state.AppState
 import kotlinx.html.button
 import kotlinx.html.dataList
@@ -24,12 +25,20 @@ import org.w3c.dom.HTMLSelectElement
 
 private const val LANDMARK_LABELS_LIST_ID = "landmark-labels"
 
+/** One visited cell's step number and the [com.eta.tbp.web.monty.GridCellDto.state] it left the LM in — see [renderEditor]'s own doc. */
+data class VisitedCellUi(
+    val step: Int,
+    val state: String,
+)
+
 /**
  * The right-hand panel: the create/edit form for [state]'s current draft, or an
  * empty-state placeholder when nothing is being edited. [visitedCells] — the most
  * recent Monty experiment's path, already scoped by the caller to the open draft
  * (see [com.eta.tbp.web.state.MontyState.lastResultMapId]'s doc) — maps each visited
- * cell to its 1-based step number, both to highlight and to number the cells it explored.
+ * cell to its 1-based step number and hypothesis state: the step number, to number the
+ * cells it explored; the state, to color each cell the same way `MontyPanel`'s
+ * exploration log colors the matching decision text (see [hypothesisStateClass]).
  * Each cell also carries a 📍 toggle for [com.eta.tbp.web.state.AppState.startLocation] —
  * where the next `Evaluate`/`Train` run (see `MontyPanel`) places the explorer, instead of
  * `Experiment`'s own random start.
@@ -37,7 +46,7 @@ private const val LANDMARK_LABELS_LIST_ID = "landmark-labels"
 fun renderEditor(
     container: HTMLElement,
     state: AppState,
-    visitedCells: Map<Pair<Int, Int>, Int> = emptyMap(),
+    visitedCells: Map<Pair<Int, Int>, VisitedCellUi> = emptyMap(),
 ) {
     container.innerHTML = ""
     val draft = state.draft
@@ -103,18 +112,21 @@ fun renderEditor(
                         for (row in 0 until draft.size) {
                             span(classes = "grid-header") { +"$row" }
                             for (col in 0 until draft.size) {
-                                val step = visitedCells[row to col]
+                                val visited = visitedCells[row to col]
                                 val isStart = state.startLocation == row to col
                                 div(classes = if (isStart) "cell-wrapper start" else "cell-wrapper") {
-                                    if (step != null) {
-                                        span(classes = "step-badge") { +"$step" }
+                                    if (visited != null) {
+                                        span(classes = "step-badge") { +"${visited.step}" }
                                     }
                                     button(classes = "start-toggle") {
                                         attributes["title"] = if (isStart) "Clear start location" else "Set as start location"
                                         onClickFunction = { state.setStartLocation(row, col) }
                                         +"📍"
                                     }
-                                    textInput(classes = if (step != null) "cell-input visited" else "cell-input") {
+                                    textInput(
+                                        classes =
+                                            if (visited != null) "cell-input ${hypothesisStateClass(visited.state)}" else "cell-input",
+                                    ) {
                                         list = LANDMARK_LABELS_LIST_ID
                                         value = byPosition[row to col]?.label ?: ""
                                         onInputFunction = { event ->

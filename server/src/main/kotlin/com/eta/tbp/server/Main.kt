@@ -131,7 +131,9 @@ private fun encodeMemory(snapshot: Map<String, List<GraphObjectModel>>): String 
 private fun encodeExperimentResult(result: ExperimentResult): String {
     val visitedCellsJson = JSONArray()
     result.visitedCells.forEach { cell ->
-        visitedCellsJson.put(JSONObject().put("row", cell.row).put("col", cell.col).put("step", cell.step))
+        visitedCellsJson.put(
+            JSONObject().put("row", cell.row).put("col", cell.col).put("step", cell.step).put("state", cell.state),
+        )
     }
     val decisionsJson = JSONArray()
     result.decisions.forEach { decision ->
@@ -140,7 +142,8 @@ private fun encodeExperimentResult(result: ExperimentResult): String {
                 .put("step", decision.step)
                 .putOpt("row", decision.row)
                 .putOpt("col", decision.col)
-                .put("message", decision.message),
+                .put("message", decision.message)
+                .put("state", decision.state),
         )
     }
     return JSONObject()

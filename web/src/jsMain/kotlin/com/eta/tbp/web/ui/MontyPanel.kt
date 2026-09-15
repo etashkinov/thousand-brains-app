@@ -1,5 +1,6 @@
 package com.eta.tbp.web.ui
 
+import com.eta.tbp.web.monty.hypothesisStateClass
 import com.eta.tbp.web.state.AppState
 import com.eta.tbp.web.state.MontyState
 import kotlinx.html.button
@@ -72,7 +73,7 @@ fun renderMontyPanel(
 
             if (lastResult != null) {
                 div(classes = "experiment-result") {
-                    p {
+                    p(classes = "outcome-text ${outcomeStateClass(lastResult.outcome)}") {
                         +when (lastResult.outcome) {
                             "Recognized" -> "Recognized: ${lastResult.label} (${formatConfidence(lastResult.confidence)})"
                             "Taught" -> "Taught \"${lastResult.label}\" as a new city."
@@ -91,7 +92,7 @@ fun renderMontyPanel(
                             if (decision.row != null && decision.col != null) {
                                 span(classes = "decision-location") { +"(${decision.row}, ${decision.col})" }
                             }
-                            span(classes = "decision-message") { +decision.message }
+                            span(classes = "decision-message ${hypothesisStateClass(decision.state)}") { +decision.message }
                         }
                     }
                 }
@@ -129,3 +130,10 @@ private fun formatConfidence(value: Float?): String {
     if (value == null) return "?"
     return "${(value * 100).toInt()}%"
 }
+
+/** [com.eta.tbp.web.monty.ExperimentResultDto.outcome] read as the same [hypothesisStateClass] hook the grid/exploration log use — "Recognized"/"Taught" are both a successful landing on one label ([com.eta.tbp.lib.lm.HypothesisState.Confirmed]'s own visual), "NoMatch" the same look as a discarded/empty hypothesis. */
+private fun outcomeStateClass(outcome: String): String =
+    when (outcome) {
+        "Recognized", "Taught" -> "state-confirmed"
+        else -> "state-no-match"
+    }

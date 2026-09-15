@@ -158,6 +158,9 @@ class EvidenceGraphLM(
     /** See [decisionLog]'s own doc. Cleared in [preEpisode], same as [nodeBuffer]/[checkedLocations]. */
     private val decisions = mutableListOf<LmDecision>()
 
+    /** Every location an actual observation (not a goal proposal — see [hypothesisStateAt]'s own doc) left this LM in, keyed by that [Location] — cleared in [preEpisode] alongside [decisions]. */
+    private val locationStates = LinkedHashMap<Location, HypothesisState>()
+
     /** The last [CmpGoal.location] a decision was already logged for — [proposeGoal] recomputes a goal every step while still [RecognitionResult.Ambiguous] (see [Explorer.explore]'s own loop), but [MotorSystem] only ever walks one unvisited step toward it at a time, so re-logging the identical "heading toward" decision on every one of those intermediate steps would just repeat itself until the goal changes or is reached. */
     private var lastLoggedGoalLocation: Location? = null
 
@@ -199,6 +202,7 @@ class EvidenceGraphLM(
     ) {
         val newPossible = possibleMatches()
         val discarded = previousPossible - newPossible.toSet()
+        val state = hypothesisStateOf(newPossible)
         val summary =
             when {
                 previousPossible.isEmpty() && newPossible.isEmpty() ->
@@ -216,17 +220,19 @@ class EvidenceGraphLM(
                 else ->
                     "'${node.feature.label}' narrows it down to ${newPossible.joinToString()}."
             }
-        addDecision(node.location, summary)
+        locationStates[node.location] = state
+        addDecision(node.location, summary, state)
         discarded.forEach { label ->
-            addDecision(node.location, "Hypothesis discarded: '$label' no longer explains what's been observed.")
+            addDecision(node.location, "Hypothesis discarded: '$label' no longer explains what's been observed.", state)
         }
     }
 
     private fun addDecision(
         location: Location?,
         message: String,
+        state: HypothesisState,
     ) {
-        decisions += LmDecision(step = decisions.size + 1, location = location, message = message)
+        decisions += LmDecision(step = decisions.size + 1, location = location, message = message, state = state)
         logger.debug(TAG) { "[$lmId] decision: $message" }
     }
 
@@ -272,6 +278,22 @@ class EvidenceGraphLM(
      */
     fun decisionLog(): List<LmDecision> = decisions.toList()
 
+    /**
+     * The [HypothesisState] left behind by the actual observation made at
+     * [location] — null for a location [matchingStep] never fed a real
+     * observation for, whether because it was never visited or because it
+     * was featureless (skipped before ever reaching [recordObservationDecision];
+     * see [matchingStep]'s own doc). Deliberately excludes [proposeGoal]'s
+     * own decisions: those name where the LM wants to look *next*, not what
+     * an observation already found there, so a location that was only ever
+     * a goal *suggestion* (never actually reached, or reached without this
+     * exact [Location] matching within [positionTolerance]) must not read as
+     * "observed" here. [Explorer.visitedLocationsWithState] is the intended
+     * caller — carrying this forward across the featureless gaps
+     * [checkedLocationsInOrder] can still contain.
+     */
+    fun hypothesisStateAt(location: Location): HypothesisState? = locationStates[location]
+
     /** [checkedLocations], but as the sequence they were actually visited in — see that field's own doc for why `LinkedHashSet` makes this safe to read straight off it. For a caller that wants to number/replay the path an episode took (e.g. step numbers on a map), not membership testing (which is what [checkedLocations] itself is for). */
     fun checkedLocationsInOrder(): List<Location> = checkedLocations.toList()
 
@@ -303,7 +325,11 @@ class EvidenceGraphLM(
             suggestGoalLocation(memory, result.labels, nodeBuffer, checkedLocations, positionTolerance) ?: return null
         logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
         if (location != lastLoggedGoalLocation) {
-            addDecision(location, "Still tied between ${result.labels.joinToString()} — heading there to tell them apart.")
+            addDecision(
+                location,
+                "Still tied between ${result.labels.joinToString()} — heading there to tell them apart.",
+                HypothesisState.Tied(result.labels),
+            )
             lastLoggedGoalLocation = location
         }
         return CmpGoal(
@@ -323,6 +349,7 @@ class EvidenceGraphLM(
         nodeBuffer.clear()
         checkedLocations.clear()
         decisions.clear()
+        locationStates.clear()
         lastLoggedGoalLocation = null
         logger.debug(TAG) { "[$lmId] episode started" }
     }

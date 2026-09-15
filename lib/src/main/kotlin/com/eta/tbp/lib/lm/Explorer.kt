@@ -109,6 +109,25 @@ class Explorer(
     fun decisionLog(): List<LmDecision> = lm.decisionLog()
 
     /**
+     * [checkedLocationsInOrder], each paired with the [HypothesisState] the
+     * LM held right after that visit. A featureless cell contributes no
+     * observation of its own (see [EvidenceGraphLM.hypothesisStateAt]'s own
+     * doc), so it carries forward whatever the last real observation left
+     * behind — every visited location gets a state to show (e.g. for
+     * coloring a UI's walked path), not just the ones that happened to bear
+     * a feature. Starts at [HypothesisState.NoMatch] before the first real
+     * observation, the same "nothing found yet" reading [HypothesisState.NoMatch]
+     * gives an empty [EvidenceGraphLM.possibleMatches] anywhere else.
+     */
+    fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> {
+        var current: HypothesisState = HypothesisState.NoMatch
+        return lm.checkedLocationsInOrder().map { location ->
+            lm.hypothesisStateAt(location)?.let { current = it }
+            location to current
+        }
+    }
+
+    /**
      * A live look at the recognition state so far this exploration —
      * unlike [endExploration], this doesn't end the episode, so a caller
      * (or [explore]) can check it after every single [visit] and keep

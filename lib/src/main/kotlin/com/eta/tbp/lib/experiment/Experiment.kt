@@ -4,6 +4,7 @@ import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.ExperimentMode
 import com.eta.tbp.lib.lm.ExplorationOutcome
 import com.eta.tbp.lib.lm.Explorer
+import com.eta.tbp.lib.lm.HypothesisState
 import com.eta.tbp.lib.lm.LmDecision
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
@@ -197,6 +198,9 @@ class Experiment(
 
     /** The just-run episode's step-by-step reasoning — a direct passthrough to [Explorer.decisionLog], for a UI to show alongside [visitedLocationsInOrder] why the outcome came out the way it did. */
     fun decisionLog(): List<LmDecision> = explorer.decisionLog()
+
+    /** [visitedLocationsInOrder], each paired with the [HypothesisState] the LM held right after that visit — a direct passthrough to [Explorer.visitedLocationsWithState], for a UI coloring the whole walked path by belief-at-the-time rather than just marking which cells were visited. */
+    fun visitedLocationsWithState(): List<Pair<Location, HypothesisState>> = explorer.visitedLocationsWithState()
 
     /**
      * Runs [explorer]'s motor system ([Explorer.explore]), bounded to well

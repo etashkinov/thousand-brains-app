@@ -2,6 +2,7 @@ package com.eta.tbp.server
 
 import com.eta.tbp.lib.experiment.Experiment
 import com.eta.tbp.lib.lm.ExperimentMode
+import com.eta.tbp.lib.lm.HypothesisState
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.Feature
 import com.eta.tbp.lib.memory.GraphObjectModel
@@ -16,20 +17,30 @@ data class LandmarkInput(
     val label: String,
 )
 
-/** [step] is this cell's 1-based position in the episode's visit order — see `Experiment.visitedLocationsInOrder`. */
+/** [step] is this cell's 1-based position in the episode's visit order — see `Experiment.visitedLocationsInOrder`. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
 data class GridCell(
     val row: Int,
     val col: Int,
     val step: Int,
+    val state: String,
 )
 
-/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal) — see `LmDecision.location`'s own doc. */
+/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal) — see `LmDecision.location`'s own doc. [state] is `"NO_MATCH"`/`"TIED"`/`"CONFIRMED"` — see [encodeHypothesisState]. */
 data class DecisionEntry(
     val step: Int,
     val row: Int?,
     val col: Int?,
     val message: String,
+    val state: String,
 )
+
+/** [HypothesisState] as the plain string the web UI matches against to pick a highlight color — kept a bare tag rather than [HypothesisState.Tied]/[HypothesisState.Confirmed]'s own label payload, since [GridCell]/[DecisionEntry].message already carry those labels in human-readable form. */
+private fun encodeHypothesisState(state: HypothesisState): String =
+    when (state) {
+        is HypothesisState.NoMatch -> "NO_MATCH"
+        is HypothesisState.Tied -> "TIED"
+        is HypothesisState.Confirmed -> "CONFIRMED"
+    }
 
 /** [startRow]/[startCol] place the explorer at that cell instead of [Experiment]'s own default random start — both null (the web UI's "no selection made" state) falls back to random, matching [Experiment.train]/[Experiment.evaluate]'s own defaults. */
 data class ExperimentRequest(
@@ -112,9 +123,14 @@ class MontyService(
 
         memory = experiment.state()
         val visitedCells =
-            experiment.visitedLocationsInOrder().mapIndexedNotNull { index, location ->
+            experiment.visitedLocationsWithState().mapIndexedNotNull { index, (location, state) ->
                 (location as? FloatLocation)?.let {
-                    GridCell(row = it.location[0].toInt(), col = it.location[1].toInt(), step = index + 1)
+                    GridCell(
+                        row = it.location[0].toInt(),
+                        col = it.location[1].toInt(),
+                        step = index + 1,
+                        state = encodeHypothesisState(state),
+                    )
                 }
             }
         val decisions =
@@ -125,6 +141,7 @@ class MontyService(
                     row = location?.location?.getOrNull(0)?.toInt(),
                     col = location?.location?.getOrNull(1)?.toInt(),
                     message = decision.message,
+                    state = encodeHypothesisState(decision.state),
                 )
             }
 

@@ -17,9 +17,16 @@ import com.eta.tbp.lib.memory.Location
  * [location] is null for a decision that isn't about a specific visit — a
  * goal proposal names where [EvidenceGraphLM] wants to look *next*, not a
  * place already checked.
+ *
+ * [state] is the LM's overall belief right after this decision — the same
+ * value a caller coloring a path of visited locations would want at every
+ * step (see [Explorer.visitedLocationsWithState]), attached here too so a
+ * UI listing decisions (not just cells) can color each line the same way
+ * without re-deriving it from [message]'s free-form text.
  */
 data class LmDecision(
     val step: Int,
     val location: Location?,
     val message: String,
+    val state: HypothesisState,
 )

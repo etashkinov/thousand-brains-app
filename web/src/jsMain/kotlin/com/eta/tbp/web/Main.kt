@@ -2,6 +2,7 @@ package com.eta.tbp.web
 
 import com.eta.tbp.web.state.AppState
 import com.eta.tbp.web.state.MontyState
+import com.eta.tbp.web.ui.VisitedCellUi
 import com.eta.tbp.web.ui.renderEditor
 import com.eta.tbp.web.ui.renderMontyPanel
 import com.eta.tbp.web.ui.renderSidebar
@@ -28,16 +29,16 @@ fun main() {
     lateinit var appState: AppState
     lateinit var montyState: MontyState
 
-    // The most recent experiment's visited cells and their step number, scoped to the map
-    // it ran on — see MontyState.lastResultMapId's doc for why a different open draft must
-    // not show them.
-    fun visitedCellsForOpenDraft(): Map<Pair<Int, Int>, Int> {
+    // The most recent experiment's visited cells, their step number, and the hypothesis
+    // state each left the LM in, scoped to the map it ran on — see MontyState.lastResultMapId's
+    // doc for why a different open draft must not show them.
+    fun visitedCellsForOpenDraft(): Map<Pair<Int, Int>, VisitedCellUi> {
         val draft = appState.draft ?: return emptyMap()
         if (montyState.lastResultMapId != draft.id) return emptyMap()
         return montyState.lastResult
             ?.visitedCells
             .orEmpty()
-            .associate { (it.row to it.col) to it.step }
+            .associate { (it.row to it.col) to VisitedCellUi(it.step, it.state) }
     }
 
     fun renderEditorAndMonty() {
