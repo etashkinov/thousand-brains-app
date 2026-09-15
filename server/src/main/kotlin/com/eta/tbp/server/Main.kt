@@ -133,11 +133,22 @@ private fun encodeExperimentResult(result: ExperimentResult): String {
     result.visitedCells.forEach { cell ->
         visitedCellsJson.put(JSONObject().put("row", cell.row).put("col", cell.col).put("step", cell.step))
     }
+    val decisionsJson = JSONArray()
+    result.decisions.forEach { decision ->
+        decisionsJson.put(
+            JSONObject()
+                .put("step", decision.step)
+                .putOpt("row", decision.row)
+                .putOpt("col", decision.col)
+                .put("message", decision.message),
+        )
+    }
     return JSONObject()
         .put("outcome", result.outcome)
         .putOpt("label", result.label)
         .putOpt("confidence", result.confidence)
         .put("locationsVisited", result.locationsVisited)
         .put("visitedCells", visitedCellsJson)
+        .put("decisions", decisionsJson)
         .toString()
 }

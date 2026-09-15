@@ -9,6 +9,7 @@ import kotlinx.html.h1
 import kotlinx.html.h2
 import kotlinx.html.js.onClickFunction
 import kotlinx.html.li
+import kotlinx.html.ol
 import kotlinx.html.p
 import kotlinx.html.span
 import kotlinx.html.ul
@@ -19,7 +20,12 @@ import org.w3c.dom.HTMLElement
  * [com.eta.tbp.lib.experiment.Experiment], over HTTP — see
  * [com.eta.tbp.web.monty.MontyClient]) has learned so far, plus the
  * evaluate/train controls that run a full autonomous episode over the
- * currently open map.
+ * currently open map. When the last run produced any
+ * [com.eta.tbp.web.monty.DecisionEntryDto]s, they're listed under
+ * "Exploration log" in the order `EvidenceGraphLM` made them — the same
+ * per-step reasoning ([com.eta.tbp.lib.lm.EvidenceGraphLM.decisionLog]'s own
+ * doc) a console would otherwise only get via [com.eta.tbp.lib.log.Logger]
+ * debug output.
  */
 fun renderMontyPanel(
     container: HTMLElement,
@@ -74,6 +80,20 @@ fun renderMontyPanel(
                         }
                     }
                     p { +"Visited ${lastResult.locationsVisited} location${if (lastResult.locationsVisited == 1) "" else "s"}." }
+                }
+            }
+
+            if (lastResult != null && lastResult.decisions.isNotEmpty()) {
+                h2(classes = "sidebar-section-title") { +"Exploration log" }
+                ol(classes = "decision-log") {
+                    for (decision in lastResult.decisions) {
+                        li(classes = "decision-item") {
+                            if (decision.row != null && decision.col != null) {
+                                span(classes = "decision-location") { +"(${decision.row}, ${decision.col})" }
+                            }
+                            span(classes = "decision-message") { +decision.message }
+                        }
+                    }
                 }
             }
         }

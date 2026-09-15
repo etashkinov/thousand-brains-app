@@ -105,6 +105,9 @@ class Explorer(
     /** [checkedLocations], in the order [visit] actually walked them — a direct passthrough to [EvidenceGraphLM.checkedLocationsInOrder]. */
     fun checkedLocationsInOrder(): List<Location> = lm.checkedLocationsInOrder()
 
+    /** This episode's step-by-step reasoning so far — a direct passthrough to [EvidenceGraphLM.decisionLog], for a caller (e.g. [com.eta.tbp.lib.experiment.Experiment]) that wants to show why [explore] ended up where it did, not just the path it walked. */
+    fun decisionLog(): List<LmDecision> = lm.decisionLog()
+
     /**
      * A live look at the recognition state so far this exploration —
      * unlike [endExploration], this doesn't end the episode, so a caller

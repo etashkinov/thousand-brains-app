@@ -23,6 +23,14 @@ data class GridCell(
     val step: Int,
 )
 
+/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal) — see `LmDecision.location`'s own doc. */
+data class DecisionEntry(
+    val step: Int,
+    val row: Int?,
+    val col: Int?,
+    val message: String,
+)
+
 /** [startRow]/[startCol] place the explorer at that cell instead of [Experiment]'s own default random start — both null (the web UI's "no selection made" state) falls back to random, matching [Experiment.train]/[Experiment.evaluate]'s own defaults. */
 data class ExperimentRequest(
     val mode: ExperimentMode,
@@ -39,6 +47,7 @@ data class ExperimentResult(
     val confidence: Float?,
     val locationsVisited: Int,
     val visitedCells: List<GridCell>,
+    val decisions: List<DecisionEntry>,
 )
 
 /**
@@ -108,6 +117,16 @@ class MontyService(
                     GridCell(row = it.location[0].toInt(), col = it.location[1].toInt(), step = index + 1)
                 }
             }
+        val decisions =
+            experiment.decisionLog().map { decision ->
+                val location = decision.location as? FloatLocation
+                DecisionEntry(
+                    step = decision.step,
+                    row = location?.location?.getOrNull(0)?.toInt(),
+                    col = location?.location?.getOrNull(1)?.toInt(),
+                    message = decision.message,
+                )
+            }
 
         return when (outcome) {
             is Experiment.Outcome.Recognized ->
@@ -117,6 +136,7 @@ class MontyService(
                     confidence = outcome.confidence,
                     locationsVisited = outcome.locationsVisited,
                     visitedCells = visitedCells,
+                    decisions = decisions,
                 )
             is Experiment.Outcome.NoMatch ->
                 ExperimentResult(
@@ -125,6 +145,7 @@ class MontyService(
                     confidence = null,
                     locationsVisited = outcome.locationsVisited,
                     visitedCells = visitedCells,
+                    decisions = decisions,
                 )
             is Experiment.Outcome.Taught ->
                 ExperimentResult(
@@ -133,6 +154,7 @@ class MontyService(
                     confidence = null,
                     locationsVisited = outcome.locationsVisited,
                     visitedCells = visitedCells,
+                    decisions = decisions,
                 )
         }
     }

@@ -4,6 +4,7 @@ import com.eta.tbp.lib.lm.EvidenceGraphLM
 import com.eta.tbp.lib.lm.ExperimentMode
 import com.eta.tbp.lib.lm.ExplorationOutcome
 import com.eta.tbp.lib.lm.Explorer
+import com.eta.tbp.lib.lm.LmDecision
 import com.eta.tbp.lib.lm.RecognitionResult
 import com.eta.tbp.lib.log.Logger
 import com.eta.tbp.lib.memory.GraphObjectModel
@@ -193,6 +194,9 @@ class Experiment(
 
     /** [visitedLocations], in the order that episode actually walked them — a direct passthrough to [Explorer.checkedLocationsInOrder], for numbering/replaying the path (e.g. step numbers on a map) rather than just testing membership. */
     fun visitedLocationsInOrder(): List<Location> = explorer.checkedLocationsInOrder()
+
+    /** The just-run episode's step-by-step reasoning — a direct passthrough to [Explorer.decisionLog], for a UI to show alongside [visitedLocationsInOrder] why the outcome came out the way it did. */
+    fun decisionLog(): List<LmDecision> = explorer.decisionLog()
 
     /**
      * Runs [explorer]'s motor system ([Explorer.explore]), bounded to well

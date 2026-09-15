@@ -155,6 +155,12 @@ class EvidenceGraphLM(
     private var lastCompletedNodes: List<GraphNode>? = null
     private var mode = ExperimentMode.TRAIN
 
+    /** See [decisionLog]'s own doc. Cleared in [preEpisode], same as [nodeBuffer]/[checkedLocations]. */
+    private val decisions = mutableListOf<LmDecision>()
+
+    /** The last [CmpGoal.location] a decision was already logged for — [proposeGoal] recomputes a goal every step while still [RecognitionResult.Ambiguous] (see [Explorer.explore]'s own loop), but [MotorSystem] only ever walks one unvisited step toward it at a time, so re-logging the identical "heading toward" decision on every one of those intermediate steps would just repeat itself until the goal changes or is reached. */
+    private var lastLoggedGoalLocation: Location? = null
+
     override fun matchingStep(messages: List<CmpMessage>) {
         for (message in messages) {
             // .add()'s own return value: false means this location was already checked earlier this
@@ -164,10 +170,64 @@ class EvidenceGraphLM(
             // evidence for whatever it matches without anything new actually having been seen.
             val isNewLocation = message.location?.let { checkedLocations.add(it) } ?: false
             if (!message.passMessage || !isNewLocation) continue
+            val previousPossible = possibleMatches()
             val node = toGraphNode(message)
             nodeBuffer.add(node)
             logger.debug(TAG) { "[$lmId] node ${node.id}: '${node.feature.label}' at ${node.location}" }
+            recordObservationDecision(node, previousPossible)
         }
+    }
+
+    /**
+     * Turns this newly-added [node] into one or more [LmDecision]s, comparing
+     * [possibleMatches] right before and after it joined [nodeBuffer] — the
+     * same evidence-threshold transition real Monty's own
+     * `_threshold_possible_matches` recomputes every step
+     * (`evidence_matching/learning_module.py`), just captured as data (see
+     * [decisionLog]'s own doc) instead of only a debug log line. Always logs
+     * one "what did this observation confirm" summary, plus a separate
+     * [LmDecision] per label that was still possible before [node] but isn't
+     * anymore — real Monty's own evidence accumulation can drop several
+     * hypotheses off `possible_matches` in a single step (an observation that
+     * fits none of them is evidence against all of them at once, per
+     * [com.eta.tbp.lib.memory.GraphMatcher]'s own class doc), so this can add
+     * more than one discard [LmDecision] for a single [node].
+     */
+    private fun recordObservationDecision(
+        node: GraphNode,
+        previousPossible: List<String>,
+    ) {
+        val newPossible = possibleMatches()
+        val discarded = previousPossible - newPossible.toSet()
+        val summary =
+            when {
+                previousPossible.isEmpty() && newPossible.isEmpty() ->
+                    "'${node.feature.label}' doesn't match anything taught yet."
+                previousPossible.isEmpty() && newPossible.size == 1 ->
+                    "'${node.feature.label}' is a known location for '${newPossible.single()}'."
+                previousPossible.isEmpty() ->
+                    "'${node.feature.label}' could belong to ${newPossible.joinToString()}."
+                newPossible.isEmpty() ->
+                    "'${node.feature.label}' isn't confirmed by anything still possible."
+                newPossible.size == 1 && discarded.isNotEmpty() ->
+                    "'${node.feature.label}' confirms '${newPossible.single()}'."
+                discarded.isEmpty() ->
+                    "'${node.feature.label}' still consistent with ${newPossible.joinToString()}."
+                else ->
+                    "'${node.feature.label}' narrows it down to ${newPossible.joinToString()}."
+            }
+        addDecision(node.location, summary)
+        discarded.forEach { label ->
+            addDecision(node.location, "Hypothesis discarded: '$label' no longer explains what's been observed.")
+        }
+    }
+
+    private fun addDecision(
+        location: Location?,
+        message: String,
+    ) {
+        decisions += LmDecision(step = decisions.size + 1, location = location, message = message)
+        logger.debug(TAG) { "[$lmId] decision: $message" }
     }
 
     override fun receiveVotes(votes: List<Any>) {
@@ -202,6 +262,16 @@ class EvidenceGraphLM(
         }
     }
 
+    /**
+     * This episode's reasoning trail so far, in the order it happened — see
+     * [LmDecision]'s own doc for why this exists as structured data
+     * alongside [logger]'s free-form debug output, and
+     * [recordObservationDecision]/[proposeGoal] for what generates each
+     * entry. Safe to call mid-episode (e.g. after every [matchingStep], the
+     * way [Explorer.visit] calls it), not just after [postEpisode].
+     */
+    fun decisionLog(): List<LmDecision> = decisions.toList()
+
     /** [checkedLocations], but as the sequence they were actually visited in — see that field's own doc for why `LinkedHashSet` makes this safe to read straight off it. For a caller that wants to number/replay the path an episode took (e.g. step numbers on a map), not membership testing (which is what [checkedLocations] itself is for). */
     fun checkedLocationsInOrder(): List<Location> = checkedLocations.toList()
 
@@ -232,6 +302,10 @@ class EvidenceGraphLM(
         val location =
             suggestGoalLocation(memory, result.labels, nodeBuffer, checkedLocations, positionTolerance) ?: return null
         logger.debug(TAG) { "[$lmId] proposing goal $location to disambiguate ${result.labels}" }
+        if (location != lastLoggedGoalLocation) {
+            addDecision(location, "Still tied between ${result.labels.joinToString()} — heading there to tell them apart.")
+            lastLoggedGoalLocation = location
+        }
         return CmpGoal(
             location = location,
             feature = null,
@@ -248,6 +322,8 @@ class EvidenceGraphLM(
     override fun preEpisode() {
         nodeBuffer.clear()
         checkedLocations.clear()
+        decisions.clear()
+        lastLoggedGoalLocation = null
         logger.debug(TAG) { "[$lmId] episode started" }
     }
 

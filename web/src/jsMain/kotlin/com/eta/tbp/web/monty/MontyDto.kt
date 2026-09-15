@@ -29,7 +29,16 @@ data class GridCellDto(
     val step: Int,
 )
 
-/** [outcome] is `"Recognized"`, `"NoMatch"` (evaluate only), or `"Taught"` (train only) — mirrors `Experiment.Outcome`'s three cases. [visitedCells] is every cell that episode visited, in visit order — for highlighting (and numbering) the path Monty actually took. */
+/** [row]/[col] are null for a decision not about a specific cell (e.g. a goal proposal naming somewhere not yet visited) — mirrors `LmDecision.location`'s own doc. */
+@Serializable
+data class DecisionEntryDto(
+    val step: Int,
+    val row: Int? = null,
+    val col: Int? = null,
+    val message: String,
+)
+
+/** [outcome] is `"Recognized"`, `"NoMatch"` (evaluate only), or `"Taught"` (train only) — mirrors `Experiment.Outcome`'s three cases. [visitedCells] is every cell that episode visited, in visit order — for highlighting (and numbering) the path Monty actually took. [decisions] is the LM's own step-by-step reasoning for that same episode, in order — see `EvidenceGraphLM.decisionLog`'s own doc. */
 @Serializable
 data class ExperimentResultDto(
     val outcome: String,
@@ -37,6 +46,7 @@ data class ExperimentResultDto(
     val confidence: Float? = null,
     val locationsVisited: Int,
     val visitedCells: List<GridCellDto> = emptyList(),
+    val decisions: List<DecisionEntryDto> = emptyList(),
 )
 
 @Serializable
